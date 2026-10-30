@@ -1,0 +1,5 @@
+# Test-only dependencies. The fake printer needs aiohttp; the app is exercised through
+# httpx's ASGI transport, so no live server is required.
+pytest>=8
+pytest-asyncio>=0.23
+aiohttp>=3.9

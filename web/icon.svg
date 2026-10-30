@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Elegoo Connector">
+  <rect width="512" height="512" rx="112" fill="#0e1013"/>
+  <g fill="none" stroke="#e7eaee" stroke-width="20" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M128 200 256 128l128 72v160l-128 72-128-72z"/>
+    <path d="M128 200 256 272l128-72"/>
+    <path d="M256 272v160"/>
+  </g>
+  <circle cx="256" cy="272" r="18" fill="#4aa8a1"/>
+</svg>

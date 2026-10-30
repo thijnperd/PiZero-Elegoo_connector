@@ -1,0 +1,19 @@
+# Local research clones (pycentauri, elegoo-web, Centauri-Carbon-Manager)
+.research/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+bridge/.venv/
+.venv/
+
+# Dev harness state
+.dev-state/
+.dev-server.log
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,19 @@
+{
+  "name": "Elegoo Connector",
+  "short_name": "Connector",
+  "description": "Local-first dashboard for the Elegoo Centauri Carbon.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0e1013",
+  "theme_color": "#0e1013",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

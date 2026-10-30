@@ -1,0 +1,43 @@
+Elegoo Connector
+===============
+
+This project contains third-party code.
+
+-------------------------------------------------------------------------------
+bridge/cc1client/  —  vendored from pycentauri
+-------------------------------------------------------------------------------
+
+Source:  https://github.com/bjan/pycentauri
+License: Apache License 2.0 (full text in bridge/cc1client/LICENSE)
+Author:  bjan and pycentauri contributors
+
+Files taken: sdcp.py, models.py, discovery.py, upload.py, mjpeg_broadcast.py,
+camera.py, client.py
+
+Changes made to the vendored code:
+
+1. The package was renamed from `pycentauri` to `cc1client`, and intra-package
+   imports were rewritten accordingly, so it cannot collide with an installed
+   copy of the upstream library.
+2. A minimal `__init__.py` was written for this project (upstream's `__init__`
+   also exposes the CC2/MQTT client, which is not vendored here).
+3. Nothing else in those files was modified. The CC2 (MQTT) client, MCP server,
+   RTSP bridge, CLI and the upstream web UI were not copied.
+
+What this code contributes: the SDCP v3 envelope and command map, the printer's
+wire models and status enums, UDP discovery, the chunked multipart upload, the
+single-upstream MJPEG broadcaster, and the async WebSocket client with
+RequestID correlation. The protocol quirks encoded in it (5 WebSocket slots,
+~60 s idle close, the dormant push scheduler, the two temperature payload
+shapes) were established by that project's testing against real hardware.
+
+-------------------------------------------------------------------------------
+Projects studied for architecture only (no code copied)
+-------------------------------------------------------------------------------
+
+* https://github.com/runnane/elegoo-web (MIT) — proxy + state-store + camera
+  fan-out architecture.
+* https://github.com/J-Lindvig/Centauri-Carbon-Manager — no licence file was
+  found, so nothing was reused; used only as a UX reference.
+* https://github.com/elegooofficial/elegoo-link (Apache-2.0), the official C++
+  SDK, is the origin of the command codes that pycentauri documents.
