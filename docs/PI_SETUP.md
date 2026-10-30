@@ -228,7 +228,9 @@ Notes on those variables:
 - `EC_MAINBOARD_ID` is optional. If you know it (from a previous discovery run or the
   printer), set it — it saves the bridge from waiting for the printer's attributes push,
   which the firmware withholds in paused and error states.
-- Leave `EC_CAMERA_PORT` alone unless you have a Centauri Carbon 2 (that model uses 8080).
+- Leave `EC_CAMERA_PORT` alone. It is the port the bridge tries **first**, not the only one it
+  tries: if nothing answers on 3031 it probes 8080, and it remembers whichever returned image
+  bytes. `GET /api/camera` reports the URL it settled on.
 
 In a second SSH session:
 
@@ -255,7 +257,7 @@ If it does not work, check these three in order — they cover almost every fail
 | Symptom | Cause | Fix |
 |---|---|---|
 | Dashboard loads, `connection.state` stays `connecting`/`offline`, `printer` is `null` | Wrong `EC_PRINTER_HOST`, or the printer is on an isolated SSID, or all five of the printer's WebSocket slots are taken | `ping` the printer from the Pi; `curl -s -o /dev/null -w '%{http_code}' http://<printer>/`; close the printer's own web page in every browser tab and retry |
-| State shows but the camera panel stays empty | Camera port is not 3031 on your firmware, or the printer's camera slots are leaked by previous clients | Try `http://<printer>:3031/video` directly in the browser; power-cycle the printer if a slot is stuck |
+| State shows but the camera panel stays empty | The printer's camera slots are leaked by previous clients (the bridge already tries both known ports), or this model has no camera | `curl -s localhost:8787/api/camera` shows the URL the bridge settled on; open it directly in a browser. Power-cycle the printer if a slot is stuck |
 | The browser asks for a password forever / immediate `401` | The password was exported in the shell but not in the systemd unit (step 6), or it contains a `#` or space that needs quoting | Compare `/etc/elegoo-bridge.env` with what you type; quote the value |
 
 **Success looks like:** live temperatures that change, a state label matching the

@@ -168,7 +168,12 @@ uploads when `capabilities.upload` is false.
 |---|---|---|
 | `GET` | `/api/camera/stream` | `multipart/x-mixed-replace` MJPEG, fanned out from **one** upstream connection. Cache-busting query allowed. |
 | `GET` | `/api/camera/snapshot` | single `image/jpeg`, `Cache-Control: no-store` |
-| `GET` | `/api/camera` | `{"available": true, "viewers": 1, "frame_age_s": 0.3}` |
+| `GET` | `/api/camera` | `{"available": true, "viewers": 1, "frame_age_s": null, "url": "http://<printer>:3031/video"}` |
+
+The camera's port is the one part of the protocol that differs between firmware builds, so
+the bridge probes the configured port first and then 8080, caching whichever answers with
+image bytes. `url` is the address it settled on — the field to read when the camera panel is
+empty. A failed read drops the cache and the next request probes again.
 
 The UI must default to snapshots and only open the stream on an explicit action
 (data usage), and must close it when the tab is hidden.

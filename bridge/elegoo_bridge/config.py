@@ -44,6 +44,7 @@ class Config:
     poll_ms: int
     push_ms: int
     camera_port: int
+    camera_path: str
     state_dir: Path
     password: str | None
     admin_user: str
@@ -89,6 +90,7 @@ def load_config() -> Config:
         poll_ms=max(1000, _int("EC_POLL_MS", 5000)),
         push_ms=max(500, _int("EC_PUSH_MS", 2000)),
         camera_port=_int("EC_CAMERA_PORT", 3031),
+        camera_path=(os.environ.get("EC_CAMERA_PATH") or "/video").strip() or "/video",
         state_dir=Path(os.environ.get("EC_STATE_DIR") or default_state_dir()),
         password=(os.environ.get("EC_AUTH_PASSWORD") or "").strip() or None,
         admin_user=os.environ.get("EC_AUTH_USER", "operator").strip() or "operator",

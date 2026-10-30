@@ -24,8 +24,9 @@ class SnapshotError(RuntimeError):
 
 
 async def snapshot(
-    host: str,
+    host: str = "",
     *,
+    url: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     port: int = CAMERA_PORT,
     path: str = CAMERA_PATH,
@@ -33,10 +34,14 @@ async def snapshot(
 ) -> bytes:
     """Return a single JPEG frame from the webcam as bytes.
 
+    ``url`` overrides ``host``/``port``/``path`` when the caller has already
+    resolved where the camera lives.
+
     ``client`` can be supplied to reuse a configured AsyncClient (e.g. for
     tests against a mock server); otherwise we create one per call.
     """
-    url = f"http://{host}:{port}{path}"
+    if url is None:
+        url = f"http://{host}:{port}{path}"
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(timeout=timeout)

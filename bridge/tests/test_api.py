@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import socket
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,7 +25,9 @@ from fake_printer import MAINBOARD, FakePrinter
 PASSWORD = "correct horse"
 
 
-def make_config(tmp_path, fake: FakePrinter, *, control: bool = True) -> Config:
+def make_config(
+    tmp_path, fake: FakePrinter, *, control: bool = True, camera_port: int | None = None
+) -> Config:
     return Config(
         printer_host="127.0.0.1",
         mainboard_id=MAINBOARD,
@@ -33,7 +36,8 @@ def make_config(tmp_path, fake: FakePrinter, *, control: bool = True) -> Config:
         control=control,
         poll_ms=1000,
         push_ms=500,
-        camera_port=fake.http_port,
+        camera_port=camera_port or fake.http_port,
+        camera_path="/video",
         state_dir=tmp_path,
         password=PASSWORD,
         admin_user="operator",
@@ -45,14 +49,14 @@ def make_config(tmp_path, fake: FakePrinter, *, control: bool = True) -> Config:
 
 
 @contextlib.asynccontextmanager
-async def rig(tmp_path, monkeypatch, *, control: bool = True):
+async def rig(tmp_path, monkeypatch, *, control: bool = True, camera_port: int | None = None):
     fake = FakePrinter()
     await fake.start()
     monkeypatch.setattr(cc1_client, "WS_PORT", fake.ws_port)
     monkeypatch.setattr(cc1_upload, "UPLOAD_PORT", fake.http_port)
     monkeypatch.setattr(cc1_camera, "CAMERA_PORT", fake.http_port)
 
-    config = make_config(tmp_path, fake, control=control)
+    config = make_config(tmp_path, fake, control=control, camera_port=camera_port)
     app = create_app(config)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -337,6 +341,12 @@ async def _has_start(fake: FakePrinter):
 # --------------------------------------------------------------------------- camera
 
 
+def free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 async def test_camera_snapshot_returns_jpeg(tmp_path, monkeypatch) -> None:
     async with rig(tmp_path, monkeypatch) as r:
         await login(r.client)
@@ -348,3 +358,21 @@ async def test_camera_snapshot_returns_jpeg(tmp_path, monkeypatch) -> None:
         assert response.headers["cache-control"] == "no-store"
         assert response.content.startswith(b"\xff\xd8")
         assert response.content.endswith(b"\xff\xd9")
+
+
+async def test_camera_snapshot_finds_the_camera_on_another_port(tmp_path, monkeypatch) -> None:
+    """A wrong EC_CAMERA_PORT must not cost the user their camera feed."""
+    from elegoo_bridge import camera as bridge_camera
+
+    monkeypatch.setattr(bridge_camera, "CANDIDATE_PORTS", ())
+    async with rig(tmp_path, monkeypatch, camera_port=free_port()) as r:
+        await login(r.client)
+        await online_state(r.client)
+        monkeypatch.setattr(bridge_camera, "CANDIDATE_PORTS", (r.fake.http_port,))
+
+        response = await r.client.get("/api/camera/snapshot")
+        assert response.status_code == 200, response.text
+        assert response.content.startswith(b"\xff\xd8")
+
+        info = (await r.client.get("/api/camera")).json()
+        assert info["url"].endswith(f":{r.fake.http_port}/video")

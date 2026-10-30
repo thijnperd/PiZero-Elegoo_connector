@@ -87,7 +87,8 @@ or Cloudflare, hardening, acceptance tests, troubleshooting — is in
 | `EC_PUSH_MS` | `2000` | Requested status-push period (`Cmd 512`). |
 | `EC_STATE_DIR` | `~/.local/state/elegoo-bridge` | Identity cache + upload staging. |
 | `EC_UPLOAD_MAX_MB` | `2048` | Per-file upload cap. |
-| `EC_CAMERA_PORT` | `3031` | MJPEG port. |
+| `EC_CAMERA_PORT` | `3031` | MJPEG port to try **first**. If nothing answers there the bridge probes 8080 and remembers whichever works, so a wrong guess costs a second, not the camera. |
+| `EC_CAMERA_PATH` | `/video` | MJPEG path on that port. |
 | `EC_LOG_LEVEL` | `INFO` | |
 
 ## Tests

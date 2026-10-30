@@ -40,6 +40,7 @@ async def main() -> None:
         poll_ms=1500,
         push_ms=1000,
         camera_port=fake.http_port,
+        camera_path="/video",
         state_dir=ROOT / ".dev-state",
         password=None,  # no login in dev
         admin_user="dev",

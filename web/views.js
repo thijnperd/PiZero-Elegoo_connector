@@ -334,6 +334,21 @@ export const controlView = {
           </p>
         </div>
 
+        <figure class="card camera" id="camera">
+          <div class="camera-frame">
+            <img id="camera-img" alt="View from the printer's camera" hidden>
+            <div class="camera-empty" id="camera-empty">
+              <span>Camera idle</span>
+              <small>Snapshots only, to save data</small>
+            </div>
+          </div>
+          <figcaption class="camera-bar">
+            <span class="badge badge-live" id="camera-mode" hidden>LIVE</span>
+            <span class="muted small" id="camera-note">Snapshots every 3 s</span>
+            <button type="button" class="btn btn-small" id="camera-toggle">Go live</button>
+          </figcaption>
+        </figure>
+
         <div class="card">
           <div class="card-head"><h2>Print speed</h2></div>
           <div class="seg" role="group" aria-label="Print speed mode">
@@ -374,6 +389,11 @@ export const controlView = {
   },
 
   mount(root, ctx) {
+    // Same camera as the Now view: watching the print while changing a heater is the
+    // point of this screen. Only one view is mounted at a time, so the controller's
+    // single snapshot timer serves whichever one is visible.
+    ctx.camera.attach(el(root, '#camera'));
+
     root.addEventListener('click', (event) => {
       const cmdButton = event.target.closest('[data-cmd]');
       if (cmdButton) return handleJobCommand(cmdButton, ctx);

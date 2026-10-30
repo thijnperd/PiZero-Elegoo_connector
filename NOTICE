@@ -21,7 +21,10 @@ Changes made to the vendored code:
    copy of the upstream library.
 2. A minimal `__init__.py` was written for this project (upstream's `__init__`
    also exposes the CC2/MQTT client, which is not vendored here).
-3. Nothing else in those files was modified. The CC2 (MQTT) client, MCP server,
+3. `camera.py`: `snapshot()` gained an optional `url` argument so the bridge can
+   pass an address it has already resolved instead of rebuilding it from host,
+   port and path. Default behaviour is unchanged.
+4. Nothing else in those files was modified. The CC2 (MQTT) client, MCP server,
    RTSP bridge, CLI and the upstream web UI were not copied.
 
 What this code contributes: the SDCP v3 envelope and command map, the printer's

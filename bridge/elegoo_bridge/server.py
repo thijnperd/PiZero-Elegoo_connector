@@ -41,6 +41,7 @@ from .auth import (
     require_session,
     reset_login_attempts,
 )
+from .camera import CameraEndpoint
 from .config import Config, load_config
 from .printer import Supervisor
 from .state import StateStore
@@ -260,7 +261,10 @@ def create_app(config: Config | None = None) -> FastAPI:
     config = config or load_config()
     store = StateStore(printer_host=config.printer_host, control=config.control)
     supervisor = Supervisor(config, store)
-    camera = CameraBroadcaster(lambda: f"http://{config.printer_host}:{config.camera_port}/video")
+    camera_endpoint = CameraEndpoint(
+        config.printer_host, port=config.camera_port, path=config.camera_path
+    )
+    camera = CameraBroadcaster(lambda: camera_endpoint.current_url)
     uploads = UploadManager(config, store, supervisor)
     write_lock = asyncio.Lock()
     last_write = {"ts": 0.0}
@@ -400,15 +404,24 @@ def create_app(config: Config | None = None) -> FastAPI:
     @app.get("/api/camera", dependencies=[session])
     async def camera_info() -> dict[str, Any]:
         viewers = len(getattr(camera, "_subscribers", ()) or ())
-        return {"available": _camera_available(), "viewers": viewers, "frame_age_s": None}
+        return {
+            "available": _camera_available(),
+            "viewers": viewers,
+            "frame_age_s": None,
+            "url": camera_endpoint.current_url,
+        }
 
     @app.get("/api/camera/snapshot", dependencies=[session])
     async def camera_snapshot_route() -> Response:
         if not _camera_available():
             raise HTTPException(status_code=502, detail="no printer configured")
+        url = await camera_endpoint.resolve()
         try:
-            frame = await camera_snapshot(config.printer_host, port=config.camera_port)
+            frame = await camera_snapshot(url=url)
         except Exception as err:  # noqa: BLE001 - httpx errors vary by version
+            # The cached address may be stale (firmware change, printer reboot on a
+            # new port): forget it so the next request probes again.
+            camera_endpoint.invalidate()
             raise HTTPException(status_code=502, detail=f"camera unavailable: {err}") from err
         return Response(content=frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
@@ -416,9 +429,11 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def camera_stream() -> StreamingResponse:
         if not _camera_available():
             raise HTTPException(status_code=502, detail="no printer configured")
+        await camera_endpoint.resolve()
         try:
             media_type, chunks = await camera.subscribe()
         except CameraUnavailable as err:
+            camera_endpoint.invalidate()
             raise HTTPException(status_code=502, detail=str(err)) from err
 
         async def stream():
