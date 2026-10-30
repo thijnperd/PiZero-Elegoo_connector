@@ -7,25 +7,9 @@ The printer's own web UI has **no authentication**, accepts roughly **five WebSo
 clients**, and drops idle sockets after about a minute. So this project puts one small
 daemon between the printer and the world:
 
-```
- phone / laptop (anywhere)
-        │  HTTPS + SSE + MJPEG
-        ▼
- Tailscale  or  Cloudflare Tunnel + Access      ← the only internet-facing thing
-        ▼
-┌──────────── Raspberry Pi Zero 2 W ────────────┐
-│  elegoo_bridge                                  │
-│   • one WebSocket to ws://printer:3030          │
-│   • one MJPEG reader on :3031, fanned out       │
-│   • the canonical state (no deltas)             │
-│   • REST + SSE + camera for every browser       │
-│   • session auth, same-origin checks            │
-└─────────────────────────────────────────────────┘
-        ▼
- Elegoo Centauri Carbon  (HTTP :80 · SDCP :3030 · MJPEG :3031)
-```
+![Architecture: a phone or laptop reaches Tailscale or Cloudflare Tunnel + Access over HTTPS, SSE and MJPEG; that is the only internet-facing thing. Behind it, on a Raspberry Pi Zero 2 W, elegoo_bridge holds one WebSocket and one MJPEG reader to the Elegoo Centauri Carbon and fans REST, SSE and camera out to every browser.](docs/diagrams/architecture.png)
 
-Status: works against a simulated printer (25 tests); the protocol layer is the field-proven
+Status: works against a simulated printer (30 tests); the protocol layer is the field-proven
 one from [pycentauri](https://github.com/bjan/pycentauri). Treat the first run against real
 hardware as a commissioning step — see `docs/PI_SETUP.md` §5 and the probe checklist in
 `PLAN.md` §5.
@@ -95,7 +79,7 @@ or Cloudflare, hardening, acceptance tests, troubleshooting — is in
 
 ```bash
 cd bridge
-.venv/bin/python -m pytest -q      # 25 passed
+.venv/bin/python -m pytest -q      # 30 passed
 ```
 
 `bridge/tests/fake_printer.py` implements enough of SDCP (envelope, `RequestID`
@@ -132,6 +116,7 @@ bridge/       the daemon (FastAPI) and its tests
 web/          no-build SPA (vanilla ES modules, no CDN, PWA shell)
 scripts/      dev_fake.py — the simulated printer harness
 docs/         setup, design, API
+  diagrams/   Mermaid sources + the rendered PNGs used in this README
 ```
 
 ## Attribution

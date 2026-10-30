@@ -1,0 +1,29 @@
+%% PLAN.md — "the shape of the bridge": the same topology with the daemon's internals.
+%% render: mmdc -i bridge-internals.mmd -o bridge-internals.png -c mermaid.json -b white --size 4000 -s 1.25
+flowchart TB
+  client["<b>Phone / browser</b><br/>anywhere"]
+
+  edge["<b>Tailscale</b> or <b>Cloudflare Tunnel + Access</b><br/>the only internet-facing thing"]
+
+  caddy["<b>Caddy</b> &nbsp;·&nbsp; optional<br/><span style='font-size:13px;color:#4a4266'>TLS in the tailnet, static assets</span>"]
+
+  bridge["<div style='text-align:left'><div style='text-align:center'><b>elegoo-bridge</b><br/><span style='font-size:13px;color:#3f5a52'>on the Raspberry Pi Zero 2 W</span></div>• upstream: ONE ws://printer:3030/websocket<br/>• upstream: ONE http://printer:3031/video<br/>• state store (single source of truth)<br/>• RequestID ↔ pending-request map<br/>• command queue + rate limit + allowlist<br/>• REST API for commands and uploads<br/>• WS/SSE fan-out for telemetry<br/>• MJPEG fan-out for camera<br/>• upload chunker (1 MiB, MD5)<br/>• auth (cookie/token) for LAN clients</div>"]
+
+  printer["<b>Elegoo Centauri Carbon</b><br/>HTTP :80 &nbsp;·&nbsp; SDCP :3030 &nbsp;·&nbsp; MJPEG :3031"]
+
+  client -->|"HTTPS · WSS · MJPEG"| edge
+  edge -->|"HTTPS"| caddy
+  caddy -->|"proxy"| bridge
+  bridge -->|"one WS · one MJPEG"| printer
+
+  classDef client fill:#eef3fb,stroke:#4a6fa5,stroke-width:1.5px,color:#12233d
+  classDef edge fill:#fff6e3,stroke:#c9a227,stroke-width:1.5px,color:#3b2f0b
+  classDef caddy fill:#f4f1fb,stroke:#7a6aa8,stroke-width:1.5px,color:#241b3d
+  classDef bridge fill:#e8f4ef,stroke:#2f6f63,stroke-width:2px,color:#0f2a20
+  classDef printer fill:#f2f2f5,stroke:#6b7280,stroke-width:1.5px,color:#1d2126
+
+  class client client
+  class edge edge
+  class caddy caddy
+  class bridge bridge
+  class printer printer

@@ -1,0 +1,24 @@
+%% README.md — "one daemon between the printer and the world".
+%% render: mmdc -i architecture.mmd -o architecture.png -c mermaid.json -b white --size 4000 -s 1.25
+flowchart TB
+  client["<b>Phone / laptop</b><br/>anywhere"]
+
+  edge["<b>Tailscale</b> &nbsp;or&nbsp; <b>Cloudflare Tunnel + Access</b><br/>the only internet-facing thing"]
+
+  bridge["<div style='text-align:left'><div style='text-align:center'><b>elegoo_bridge</b><br/><span style='font-size:13px;color:#3f5a52'>on the Raspberry Pi Zero 2 W</span></div>• one WebSocket to ws://printer:3030<br/>• one MJPEG reader on :3031, fanned out<br/>• the canonical state, never deltas<br/>• REST + SSE + camera for every browser<br/>• session auth, same-origin checks</div>"]
+
+  printer["<b>Elegoo Centauri Carbon</b><br/>HTTP :80 &nbsp;·&nbsp; SDCP :3030 &nbsp;·&nbsp; MJPEG :3031"]
+
+  client -->|"HTTPS · SSE · MJPEG"| edge
+  edge -->|"private network only"| bridge
+  bridge -->|"one connection each"| printer
+
+  classDef client fill:#eef3fb,stroke:#4a6fa5,stroke-width:1.5px,color:#12233d
+  classDef edge fill:#fff6e3,stroke:#c9a227,stroke-width:1.5px,color:#3b2f0b
+  classDef bridge fill:#e8f4ef,stroke:#2f6f63,stroke-width:2px,color:#0f2a20
+  classDef printer fill:#f2f2f5,stroke:#6b7280,stroke-width:1.5px,color:#1d2126
+
+  class client client
+  class edge edge
+  class bridge bridge
+  class printer printer

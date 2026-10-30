@@ -259,30 +259,7 @@ implementation** — the plan below still applies if you want your own page.
 
 ### 3.1 Architecture
 
-```
-PHONE / BROWSER (anywhere)
-   │  HTTPS  +  WSS  +  MJPEG-over-HTTP
-   ▼
-[ Tailscale  or  Cloudflare Tunnel + Access ]     ← the only internet-facing thing
-   ▼
-┌─────────────── Raspberry Pi Zero 2 W ───────────────┐
-│  Caddy (optional: TLS in tailnet, static assets)     │
-│                                                     │
-│  elegoo-bridge  ─────────────────────────────────┐   │
-│   • upstream: ONE ws://printer:3030/websocket    │   │
-│   • upstream: ONE http://printer:3031/video      │   │
-│   • state store (single source of truth)         │   │
-│   • RequestID ↔ pending-request map              │   │
-│   • command queue + rate limit + allowlist       │   │
-│   • HTTP API (REST) for commands/uploads         │   │
-│   • WS/SSE fan-out for telemetry                 │   │
-│   • MJPEG fan-out for camera                     │   │
-│   • upload chunker (1 MiB, MD5, resumable)       │   │
-│   • auth (cookie/token) for LAN clients          │   │
-└──────────────────────────────────────────────────┘   │
-   ▼                                                   │
-Elegoo Centauri Carbon  (HTTP :80 · SDCP :3030 · MJPEG :3031)
-```
+![Architecture: the browser reaches Tailscale or Cloudflare Access over HTTPS, WSS and MJPEG, optionally through Caddy, into the elegoo-bridge on the Raspberry Pi Zero 2 W, which holds one WebSocket and one MJPEG stream to the printer](docs/diagrams/bridge-internals.png)
 
 Rules that make or break this design:
 
