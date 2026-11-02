@@ -52,6 +52,7 @@ class Config:
     web_dir: Path
     log_level: str
     upload_max_bytes: int
+    trust_loopback: bool = False
     # Derived.
     auth_enabled: bool = field(init=False)
 
@@ -98,4 +99,5 @@ def load_config() -> Config:
         web_dir=web_dir,
         log_level=os.environ.get("EC_LOG_LEVEL", "INFO").upper(),
         upload_max_bytes=_int("EC_UPLOAD_MAX_MB", 2048) * 1024 * 1024,
+        trust_loopback=_bool("EC_TRUST_LOOPBACK", False),
     )

@@ -249,6 +249,13 @@ not `null`. Press `Ctrl-C` in the first session when you are done.
 
 1. On the laptop, on the same WiFi: open `http://192.168.178.50:8787`.
 2. Log in with the `EC_AUTH_PASSWORD` you exported.
+
+   The Pi's own screen is the exception. With `EC_TRUST_LOOPBACK=1` in
+   `/etc/elegoo-bridge.env`, requests arriving on `127.0.0.1`/`::1` without forwarding
+   headers are treated as signed in, so a browser showing the dashboard on the Pi never
+   stops at the login page. Cloudflare and Tailscale always forward the client headers,
+   so anything arriving from outside still needs the password. Leave it off if you put
+   your own reverse proxy in front and it does not add those headers.
 3. Confirm the dashboard shows the printer's state, temperatures, and a camera snapshot.
 4. Leave it open for a minute: values should update every few seconds.
 
@@ -283,6 +290,8 @@ printer's screen, and a camera image.
    EC_POLL_MS=5000
    EC_LOG_LEVEL=INFO
    EC_UPLOAD_MAX_MB=2048
+   # 1 = the Pi's own screen skips the login page (there is no keyboard there)
+   EC_TRUST_LOOPBACK=1
    EOF
    sudo chmod 600 /etc/elegoo-bridge.env
    sudo chown root:root /etc/elegoo-bridge.env

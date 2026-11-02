@@ -67,6 +67,7 @@ or Cloudflare, hardening, acceptance tests, troubleshooting — is in
 | `EC_AUTH_PASSWORD` | — | Enables the login page and session cookie. |
 | `EC_AUTH_USER` | `operator` | Label only. |
 | `EC_SESSION_TTL_S` | 30 days | Cookie lifetime. |
+| `EC_TRUST_LOOPBACK` | `0` | `1` treats requests from `127.0.0.1`/`::1` that carry no forwarding headers as signed in, so a dashboard open on the Pi itself never stops at the login page. Off by default: a tunnel also connects over loopback, so only enable it where the operators are local. |
 | `EC_POLL_MS` | `5000` | Fallback `Cmd 0` polling period. |
 | `EC_PUSH_MS` | `2000` | Requested status-push period (`Cmd 512`). |
 | `EC_STATE_DIR` | `~/.local/state/elegoo-bridge` | Identity cache + upload staging. |

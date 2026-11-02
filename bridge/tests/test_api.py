@@ -26,7 +26,12 @@ PASSWORD = "correct horse"
 
 
 def make_config(
-    tmp_path, fake: FakePrinter, *, control: bool = True, camera_port: int | None = None
+    tmp_path,
+    fake: FakePrinter,
+    *,
+    control: bool = True,
+    camera_port: int | None = None,
+    trust_loopback: bool = False,
 ) -> Config:
     return Config(
         printer_host="127.0.0.1",
@@ -45,18 +50,28 @@ def make_config(
         web_dir=tmp_path / "web",  # deliberately absent: exercises the fallback route
         log_level="WARNING",
         upload_max_bytes=8 * 1024 * 1024,
+        trust_loopback=trust_loopback,
     )
 
 
 @contextlib.asynccontextmanager
-async def rig(tmp_path, monkeypatch, *, control: bool = True, camera_port: int | None = None):
+async def rig(
+    tmp_path,
+    monkeypatch,
+    *,
+    control: bool = True,
+    camera_port: int | None = None,
+    trust_loopback: bool = False,
+):
     fake = FakePrinter()
     await fake.start()
     monkeypatch.setattr(cc1_client, "WS_PORT", fake.ws_port)
     monkeypatch.setattr(cc1_upload, "UPLOAD_PORT", fake.http_port)
     monkeypatch.setattr(cc1_camera, "CAMERA_PORT", fake.http_port)
 
-    config = make_config(tmp_path, fake, control=control, camera_port=camera_port)
+    config = make_config(
+        tmp_path, fake, control=control, camera_port=camera_port, trust_loopback=trust_loopback
+    )
     app = create_app(config)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -126,6 +141,20 @@ async def test_login_is_rate_limited(tmp_path, monkeypatch) -> None:
         for _ in range(5):
             assert (await r.client.post("/api/login", json={"password": "nope"})).status_code == 401
         assert (await r.client.post("/api/login", json={"password": "nope"})).status_code == 429
+
+
+async def test_loopback_can_be_trusted(tmp_path, monkeypatch) -> None:
+    """The Pi's own screen has no keyboard, so its requests may skip the login page."""
+    async with rig(tmp_path, monkeypatch, trust_loopback=True) as r:
+        assert (await r.client.get("/api/state")).status_code == 200
+        # A tunnel also reaches the bridge over loopback, but forwards these headers.
+        proxied = await r.client.get("/api/state", headers={"cf-connecting-ip": "203.0.113.7"})
+        assert proxied.status_code == 401
+
+
+async def test_loopback_is_not_trusted_by_default(tmp_path, monkeypatch) -> None:
+    async with rig(tmp_path, monkeypatch) as r:
+        assert (await r.client.get("/api/state")).status_code == 401
 
 
 # --------------------------------------------------------------------------- state
