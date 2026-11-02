@@ -52,7 +52,7 @@ inactive). One file, two visual states, 32 bytes at 16 px, 72 bytes at 24 px, 12
 | Our name | Tabler icon | | Our name | Tabler icon |
 |---|---|---|---|---|
 | `weather` | `sun` | | `clock` | `clock` |
-| `cloud` | `cloud` | | `printer` | `printer` |
+| `cloud` | `cloud` | | `printer` | hand-drawn |
 | `rain` | `cloud-rain` | | `terminal` | `terminal-2` |
 | `snow` | `cloud-snow` | | `music` | `music` |
 | `storm` | `cloud-storm` | | `folder` | `folder` |
@@ -63,6 +63,12 @@ inactive). One file, two visual states, 32 bytes at 16 px, 72 bytes at 24 px, 12
 | `timer` | `stopwatch` | | | |
 | `alarm` | `alarm` | | | |
 | `calendar` | `calendar` | | | |
+
+`printer` is the one glyph not from Tabler: there is no 3D-printer icon in the set
+(`3d-printer` and `printer-3d` are both 404), and Tabler's `printer` is a paper printer.
+`tools/svg2mask/svg/printer.svg` is therefore hand-drawn to the same rules — 24×24 grid,
+2 px stroke, `currentColor` — so the builder treats it like any other source: a gantry
+frame with the extruder on the beam and an unfinished part on the bed.
 
 `weather` is Tabler's `sun`: the set has no `cloud-sun`, and no `weather-*` glyphs at all,
 so the clear-sky glyph carries the app tile and each condition gets its own name. `clock`
