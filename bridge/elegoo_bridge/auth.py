@@ -18,6 +18,14 @@ from .config import Config
 
 MAX_ATTEMPTS = 5
 ATTEMPT_WINDOW_S = 300.0
+
+# The Pi's own screen has no keyboard, so making it type the password leaves the
+# dashboard unusable at boot. Requests that never left the machine can count as
+# signed in, but only when the operator asks for it (EC_TRUST_LOOPBACK).
+LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
+# A tunnel or reverse proxy connects to the bridge over loopback, so its requests look
+# local. Any of these headers proves the request came from somewhere else.
+PROXY_HEADERS = ("cf-connecting-ip", "cf-ray", "x-forwarded-for", "x-forwarded-host", "forwarded")
 _attempts: dict[str, deque[float]] = defaultdict(deque)
 
 
@@ -72,8 +80,18 @@ def check_password(config: Config, password: str) -> bool:
     return hmac.compare_digest(password, config.password)
 
 
+def is_local_request(request: Request) -> bool:
+    """True when the request came from the Pi itself, not through a proxy or tunnel."""
+    host = request.client.host if request.client else ""
+    if host not in LOOPBACK_HOSTS:
+        return False
+    return not any(name in request.headers for name in PROXY_HEADERS)
+
+
 def is_authenticated(config: Config, request: Request) -> bool:
     if not config.auth_enabled:
+        return True
+    if config.trust_loopback and is_local_request(request):
         return True
     return verify_token(config, request.cookies.get(config.cookie_name))
 

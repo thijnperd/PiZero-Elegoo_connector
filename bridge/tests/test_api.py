@@ -33,6 +33,7 @@ def make_config(
     *,
     control: bool = True,
     camera_port: int | None = None,
+    trust_loopback: bool = False,
     notify_url: str | None = None,
     metrics_token: str | None = None,
 ) -> Config:
@@ -53,6 +54,7 @@ def make_config(
         web_dir=tmp_path / "web",  # deliberately absent: exercises the fallback route
         log_level="WARNING",
         upload_max_bytes=8 * 1024 * 1024,
+        trust_loopback=trust_loopback,
         notify_url=notify_url,
         notify_format="json",
         notify_events=frozenset({"finished", "failed"}),
@@ -68,6 +70,7 @@ async def rig(
     *,
     control: bool = True,
     camera_port: int | None = None,
+    trust_loopback: bool = False,
     notify_url: str | None = None,
     metrics_token: str | None = None,
 ):
@@ -82,6 +85,7 @@ async def rig(
         fake,
         control=control,
         camera_port=camera_port,
+        trust_loopback=trust_loopback,
         notify_url=notify_url,
         metrics_token=metrics_token,
     )
@@ -160,6 +164,20 @@ async def test_login_is_rate_limited(tmp_path, monkeypatch) -> None:
         for _ in range(5):
             assert (await r.client.post("/api/login", json={"password": "nope"})).status_code == 401
         assert (await r.client.post("/api/login", json={"password": "nope"})).status_code == 429
+
+
+async def test_loopback_can_be_trusted(tmp_path, monkeypatch) -> None:
+    """The Pi's own screen has no keyboard, so its requests may skip the login page."""
+    async with rig(tmp_path, monkeypatch, trust_loopback=True) as r:
+        assert (await r.client.get("/api/state")).status_code == 200
+        # A tunnel also reaches the bridge over loopback, but forwards these headers.
+        proxied = await r.client.get("/api/state", headers={"cf-connecting-ip": "203.0.113.7"})
+        assert proxied.status_code == 401
+
+
+async def test_loopback_is_not_trusted_by_default(tmp_path, monkeypatch) -> None:
+    async with rig(tmp_path, monkeypatch) as r:
+        assert (await r.client.get("/api/state")).status_code == 401
 
 
 # --------------------------------------------------------------------------- state

@@ -1,0 +1,14 @@
+<!-- hand-drawn for this project, not Tabler: FDM printer seen from the front.
+     24x24 grid, 2px stroke, currentColor - same rules as the Tabler sources, so
+     build.mjs rasterises it without special handling. The machine stands on two
+     legs with the bed between them, so the glyph has no solid base bar; the
+     printed part is open at the top to read as a print in progress. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"
+     fill="none" stroke="currentColor" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 20V5h14v15"/>
+  <path d="M6 17h12"/>
+  <path d="M10 5v3h4V5"/>
+  <path d="M12 8v1"/>
+  <path d="M8 17v-5h8v5"/>
+</svg>

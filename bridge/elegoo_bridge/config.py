@@ -93,6 +93,7 @@ class Config:
     web_dir: Path
     log_level: str
     upload_max_bytes: int
+    trust_loopback: bool = False
     # Push notifications. Empty URL = off; nothing else may be enabled by accident.
     notify_url: str | None = None
     notify_format: str = "json"
@@ -151,6 +152,7 @@ def load_config() -> Config:
         web_dir=web_dir,
         log_level=os.environ.get("EC_LOG_LEVEL", "INFO").upper(),
         upload_max_bytes=_int("EC_UPLOAD_MAX_MB", 2048) * 1024 * 1024,
+        trust_loopback=_bool("EC_TRUST_LOOPBACK", False),
         notify_url=(os.environ.get("EC_NOTIFY_URL") or "").strip() or None,
         notify_format=_format_for(
             (os.environ.get("EC_NOTIFY_URL") or "").strip(), os.environ.get("EC_NOTIFY_FORMAT")
