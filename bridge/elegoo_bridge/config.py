@@ -29,9 +29,50 @@ def _int(name: str, default: int) -> int:
         return default
 
 
+def _float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 def default_state_dir() -> Path:
     base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
     return Path(base) / "elegoo-bridge"
+
+
+#: Transitions a notification may be sent for (see docs/DESIGN_PHILOSOPHY.md P13).
+NOTIFY_EVENTS = ("started", "finished", "failed", "paused", "resumed", "stopped")
+NOTIFY_FORMATS = ("ntfy", "telegram", "discord", "json")
+
+
+def _format_for(url: str, raw: str | None) -> str:
+    """Pick the payload shape from the URL when the operator did not say."""
+    if raw and raw.strip().lower() in NOTIFY_FORMATS:
+        return raw.strip().lower()
+    lowered = url.lower()
+    if "api.telegram.org" in lowered:
+        return "telegram"
+    if "discord.com/api/webhooks" in lowered or "discordapp.com/api/webhooks" in lowered:
+        return "discord"
+    if "ntfy" in lowered:
+        return "ntfy"
+    return "json"
+
+
+def _events(raw: str | None) -> frozenset[str]:
+    """Only finished/failed by default: an interruption has to earn its place."""
+    if raw is None:
+        return frozenset({"finished", "failed"})
+    wanted = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    if not wanted or "none" in wanted:
+        return frozenset()
+    if "all" in wanted:
+        return frozenset(NOTIFY_EVENTS)
+    return frozenset(name for name in wanted if name in NOTIFY_EVENTS)
 
 
 @dataclass(slots=True)
@@ -52,6 +93,18 @@ class Config:
     web_dir: Path
     log_level: str
     upload_max_bytes: int
+    # Push notifications. Empty URL = off; nothing else may be enabled by accident.
+    notify_url: str | None = None
+    notify_format: str = "json"
+    notify_events: frozenset[str] = frozenset({"finished", "failed"})
+    notify_token: str | None = None
+    notify_target: str | None = None
+    # Usage bookkeeping and the optional "time to service" reminder (0 = off).
+    maintenance_hours: float = 0.0
+    # One upstream camera read per window, however many viewers ask for a snapshot.
+    snapshot_cache_ms: int = 800
+    # Prometheus scrapers cannot log in; a bearer token is the practical alternative.
+    metrics_token: str | None = None
     # Derived.
     auth_enabled: bool = field(init=False)
 
@@ -98,4 +151,14 @@ def load_config() -> Config:
         web_dir=web_dir,
         log_level=os.environ.get("EC_LOG_LEVEL", "INFO").upper(),
         upload_max_bytes=_int("EC_UPLOAD_MAX_MB", 2048) * 1024 * 1024,
+        notify_url=(os.environ.get("EC_NOTIFY_URL") or "").strip() or None,
+        notify_format=_format_for(
+            (os.environ.get("EC_NOTIFY_URL") or "").strip(), os.environ.get("EC_NOTIFY_FORMAT")
+        ),
+        notify_events=_events(os.environ.get("EC_NOTIFY_EVENTS")),
+        notify_token=(os.environ.get("EC_NOTIFY_TOKEN") or "").strip() or None,
+        notify_target=(os.environ.get("EC_NOTIFY_TARGET") or "").strip() or None,
+        maintenance_hours=max(0.0, _float("EC_MAINTENANCE_HOURS", 0.0)),
+        snapshot_cache_ms=max(0, _int("EC_SNAPSHOT_CACHE_MS", 800)),
+        metrics_token=(os.environ.get("EC_METRICS_TOKEN") or "").strip() or None,
     )

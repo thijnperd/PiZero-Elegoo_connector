@@ -23,7 +23,14 @@ hardware as a commissioning step — see `docs/PI_SETUP.md` §5 and the probe ch
 - **Files** — list, delete (refuses the file that is printing), resumable-feeling chunked
   upload with real progress, start a job straight from an upload.
 - **History** — completed/stopped jobs from the printer's own task history.
-- **About** — firmware, `MainboardID`, reconnect count, last error, and the event log.
+- **Push notifications** — ntfy, Telegram, Discord or a JSON webhook, one message per
+  transition (finished, failed, paused, …) and never one per progress tick. Retries the
+  transient failures, gives up on a rejected token, and shows what it delivered.
+- **Usage and maintenance** — print hours and job counts that survive a restart, a week of
+  daily bars, and an optional "time to service" reminder at the interval you set.
+- **Metrics** — a Prometheus endpoint for the Pi's own graphs or an existing monitoring stack.
+- **About** — firmware, `MainboardID`, reconnect count, last error, usage, notification
+  health, and the event log.
 - **Read-only by default.** `EC_CONTROL` is off until you turn it on; when it is off the
   mutating routes are not registered at all.
 
@@ -55,6 +62,24 @@ Then open `http://<pi-ip>:8787`. The full step-by-step — flashing the Pi, syst
 or Cloudflare, hardening, acceptance tests, troubleshooting — is in
 [`docs/PI_SETUP.md`](docs/PI_SETUP.md).
 
+## Running on the Pi
+
+Three scripts, all standard library only, no extra wheels on a 512 MB board:
+
+| Script | What it does |
+|---|---|
+| `scripts/start-bridge.sh` | `start` / `stop` / `restart` / `ensure`. Reads its settings from `~/.elegoo-bridge.env` (mode 600), so the password is not sitting on a command line. Waits for the old process to actually exit before starting the new one. `ensure` starts it only when it is down and is silent otherwise, so cron can run it every two minutes as a watchdog. |
+| `scripts/doctor.py` | One-pass health check: bridge process, `healthz`, frame age, a real camera JPEG, the printer's three ports, SD card, undervoltage, CPU temperature, clock and panel. Exit status is 1 if anything FAILed, so a tunnel monitor or cron can act on it. |
+| `scripts/panel.py` | Draws a small home screen — clock, Buienradar weather, a timer and the printer as one of four apps — onto a Waveshare SPI LCD HAT (`/dev/fbN`), and renders that same frame to a PNG with `--preview` when no panel is attached. Setup in [`docs/PANEL.md`](docs/PANEL.md). |
+| `scripts/remote-access.sh` | `status` / `setup` / `printer` / `off` for reaching the dashboard from another network through a Tailscale tailnet — no port forwarding, no public hostname. See [`docs/PI_SETUP.md`](docs/PI_SETUP.md) §7A. |
+
+```bash
+scripts/start-bridge.sh restart      # configuration lives in ~/.elegoo-bridge.env
+python3 scripts/doctor.py            # 12 checks, exit 1 on failure
+python3 scripts/panel.py --demo --preview panel.png
+scripts/remote-access.sh status      # readable from another network, or not
+```
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -73,19 +98,29 @@ or Cloudflare, hardening, acceptance tests, troubleshooting — is in
 | `EC_UPLOAD_MAX_MB` | `2048` | Per-file upload cap. |
 | `EC_CAMERA_PORT` | `3031` | MJPEG port to try **first**. If nothing answers there the bridge probes 8080 and remembers whichever works, so a wrong guess costs a second, not the camera. |
 | `EC_CAMERA_PATH` | `/video` | MJPEG path on that port. |
+| `EC_SNAPSHOT_CACHE_MS` | `800` | How long one snapshot is reused. Three open tabs cost one camera read, not three. `0` disables the cache. |
+| `EC_NOTIFY_URL` | — | Where transitions are pushed. Empty means no notifications at all. |
+| `EC_NOTIFY_FORMAT` | from URL | `ntfy`, `telegram`, `discord` or `json`. Guessed from the URL unless set. |
+| `EC_NOTIFY_EVENTS` | `finished,failed` | Comma list of `started, finished, failed, paused, resumed, stopped`, or `all` / `none`. |
+| `EC_NOTIFY_TOKEN` | — | Bearer token for ntfy or a JSON webhook. Never logged, never in the snapshot. |
+| `EC_NOTIFY_TARGET` | — | Telegram `chat_id`. |
+| `EC_MAINTENANCE_HOURS` | `0` | Remind in the log once this many print hours have passed since the last reset. `0` is off. |
+| `EC_METRICS_TOKEN` | — | Lets a scraper read `/metrics` with `Authorization: Bearer …` instead of the session cookie. |
 | `EC_LOG_LEVEL` | `INFO` | |
 
 ## Tests
 
 ```bash
 cd bridge
-.venv/bin/python -m pytest -q      # 30 passed
+.venv/bin/python -m pytest -q      # 59 passed
 ```
 
 `bridge/tests/fake_printer.py` implements enough of SDCP (envelope, `RequestID`
 correlation, status/attribute pushes, `Cmd 0/1/128-131/258/259/320/321/403/512`), the
-multipart upload endpoint and an MJPEG stream to exercise the bridge end to end. Nothing in
-the suite touches real hardware.
+multipart upload endpoint and an MJPEG stream to exercise the bridge end to end. The push
+loop is what the notification and usage tests ride on: a status change on the fake printer
+has to arrive as exactly one message and one counter increment. Nothing in the suite touches
+real hardware.
 
 ## Documentation
 
@@ -95,6 +130,7 @@ the suite touches real hardware.
 | [`docs/PI_SETUP.md`](docs/PI_SETUP.md) | Step-by-step Pi installation, remote access, hardening, acceptance tests |
 | [`docs/DESIGN_PHILOSOPHY.md`](docs/DESIGN_PHILOSOPHY.md) | The 15 named principles the UI and bridge are built on, with sources |
 | [`docs/API.md`](docs/API.md) | The bridge's HTTP + SSE contract (the snapshot object, every route) |
+| [`docs/PANEL.md`](docs/PANEL.md) | The Waveshare LCD HAT on the 40-pin header: wiring, SPI overlay, panel.py |
 
 ## Deliberately out of scope
 
@@ -111,10 +147,13 @@ bridge/       the daemon (FastAPI) and its tests
     config.py   env-driven settings
     state.py    normalisation + the canonical snapshot
     printer.py  single-owner connection, reconnect, polling fallback
-    server.py   REST, SSE, camera, uploads, auth wiring
+    server.py   REST, SSE, camera, uploads, auth, metrics wiring
     auth.py     session cookie, login limiter, same-origin check
+    notify.py   one push per transition: ntfy, Telegram, Discord, JSON webhook
+    usage.py    print hours, job counts and the maintenance reminder, on disk
+    camera.py   camera address probing + the shared snapshot cache
 web/          no-build SPA (vanilla ES modules, no CDN, PWA shell)
-scripts/      dev_fake.py — the simulated printer harness
+scripts/      start-bridge.sh, doctor.py, panel.py, remote-access.sh, dev_fake.py (simulated printer)
 docs/         setup, design, API
   diagrams/   Mermaid sources + the rendered PNGs used in this README
 ```
@@ -126,3 +165,5 @@ docs/         setup, design, API
 WebSocket client. It was renamed and trimmed; changes are listed in [`NOTICE`](NOTICE).
 The architecture was informed by `runnane/elegoo-web` and `J-Lindvig/Centauri-Carbon-Manager`
 (studied, not copied). No license has been chosen yet for the original code in this repo.
+
+More tools at [thijnperd.github.io](https://thijnperd.github.io/).

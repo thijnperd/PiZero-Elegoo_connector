@@ -227,6 +227,36 @@ target readable as "fine" rather than "a number".
 that opens on an overview and drills into detail —
 [Yokogawa, "ISA-101: Toward a More Effective HMI Strategy"](https://www.yokogawa.com/us/library/resources/media-publications/isa-101-toward-a-more-effective-hmi-strategy/).
 
+### P16. Legibility is a budget, not a taste
+
+**The rule.** Both surfaces are held to measured numbers: 4.5:1 for body text and 3:1 for
+large text, 3:1 for anything whose shape carries meaning, 24 px as the floor for a target
+and 44 px as the default, and never colour alone. When the numbers and the layout disagree,
+the content loses weight until it fits — it is never shrunk below the floor and never clipped.
+
+**Why.** The panel is a cheap TN LCD read at arm's length in daylight; the dashboard is a
+phone held in one hand, often outdoors. Text that "fits" at 7 px and a red/green dot as the
+only difference are exactly the two things that disappear under those conditions, and 8% of
+men cannot separate the dot's colours at all.
+
+**In this project.** The panel's glyph raster is 5x7 px and scales in whole steps, so a 128 px
+HAT draws labels at 14 px and never at 7 px unless the line is genuinely secondary. The web
+theme is audited by walking every text node, compositing `color-mix()`/`oklab()` backgrounds
+before measuring: 232 nodes per theme, worst case 4.71:1 (light) and 5.83:1 (dark). Buttons
+are 44 px minimum, SPA route changes move focus to `main`, upload progress exposes
+`role="progressbar"` with a live percentage, and disabled panel rows carry a filled/hollow
+marker rather than only a dimmer white.
+
+**Source.** [WCAG 2.2 contrast minimum](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),
+[non-text contrast](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html),
+[target size](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html),
+[use of colour](https://www.w3.org/WAI/WCAG22/Understanding/use-of-color.html),
+[status messages](https://www.w3.org/WAI/WCAG22/Understanding/status-messages.html);
+the 0.1 s / 1 s / 10 s feedback budget is from
+[NN/g, "Response Times: The 3 Important Limits"](https://www.nngroup.com/articles/response-times-3-important-limits/),
+and the glanceability framing from
+[NN/g, "Dashboards: Making Charts and Graphs Easier to Understand"](https://www.nngroup.com/articles/dashboards-preattentive/).
+
 ---
 
 ## 4. Remote access
@@ -288,6 +318,11 @@ status frames per print and perhaps five facts worth waking someone for.
 **In this project.** The log is the single event stream, deduplicated by construction: a
 log entry is written in `_announce_transition()` when the state slug changes, so repeated
 frames in the same state produce nothing. `LOG_MAX = 50` bounds memory on a 512 MB Pi.
+`bridge/elegoo_bridge/notify.py` subscribes to those same transitions rather than watching
+the status stream: ntfy, Telegram, Discord and a JSON webhook, `finished` and `failed` by
+default, `EC_NOTIFY_EVENTS` to widen it. Delivery is queued (one small worker, never the
+printer loop), retried only for transient failures, and counted in the snapshot so "did my
+phone get it?" has an answer. Per-event preferences exist; quiet hours still do not.
 
 **Source.** Android's notification guidance asks for brief, timely, relevant messages with
 user control over categories —
@@ -360,6 +395,8 @@ The framing of confirmation as convenience rather than safeguard is a **design d
 - **One permission for viewing and controlling.** Especially over a tunnel (P11).
 - **Colour as the only carrier of meaning.** Deuteranopia is common; the printer does not
   care (P8).
+- **Content that shrinks to fit, or clips at the edge.** A clipped value reads as a smaller
+  number; drop precision or a secondary line instead (P16).
 - **Decoration that moves.** Animation competes with the state change that matters (P10).
 - **Delivering the MJPEG stream to a phone by default.** (P12).
 
@@ -380,9 +417,10 @@ The framing of confirmation as convenience rather than safeguard is a **design d
 
 ## Open questions
 
-1. **Notification delivery.** The log is the event source, but there is no push channel yet.
-   Web Push via the PWA service worker is the obvious candidate; ntfy or a Telegram bot is
-   the low-effort one. Which one depends on whether the phone keeps the app installed.
+1. **Notification delivery.** *Answered for now:* `notify.py` pushes transitions to ntfy,
+   Telegram, Discord or a JSON webhook, chosen per event. Web Push through the PWA service
+   worker remains unbuilt — it needs VAPID keys and a subscription store, and it only works
+   while the app is installed, which is exactly the case a push channel is meant to cover.
 2. **Camera framing.** One shared upstream MJPEG at the printer's native resolution is
    simple, but we cannot downscale on the Pi without CPU cost. Is a 1 fps snapshot poll
    (±3 s freshness) genuinely good enough as the default, or does it feel broken when

@@ -22,6 +22,14 @@ const SPEED_MODES = [
   { id: 'ludicrous', label: 'Ludicrous', pct: 160 },
 ];
 const ACTIVE_STATES = new Set(['printing', 'starting', 'preheating', 'homing', 'leveling', 'calibrating']);
+//: One press, two targets. Same pair the panel's control page offers, so the two
+//: screens cannot disagree about what "PLA" means.
+const PRESET_TEMPS = {
+  pla: { nozzle: 215, bed: 60 },
+  petg: { nozzle: 240, bed: 80 },
+  abs: { nozzle: 260, bed: 100 },
+  cool: { nozzle: 0, bed: 0 },
+};
 
 // --- formatting -------------------------------------------------------------
 
@@ -363,6 +371,21 @@ export const controlView = {
         </div>
 
         <div class="card">
+          <div class="card-head"><h2>Preheat</h2></div>
+          <div class="seg" role="group" aria-label="Preheat preset">
+            ${Object.entries(PRESET_TEMPS)
+              .map(
+                ([id, temps]) => `
+              <button type="button" data-preset="${id}" data-pending-key="preset" aria-pressed="false">
+                <span>${id === 'cool' ? 'Cool' : id.toUpperCase()}</span><small>${temps.nozzle} / ${temps.bed}</small>
+              </button>`,
+              )
+              .join('')}
+          </div>
+          <p class="muted small">Sets nozzle and bed in one press. Idle only — a running job keeps the targets it started with.</p>
+        </div>
+
+        <div class="card">
           <div class="card-head"><h2>Fans</h2></div>
           ${fanSlider('model', 'Model')}
           ${fanSlider('auxiliary', 'Auxiliary')}
@@ -400,6 +423,9 @@ export const controlView = {
 
       const speedButton = event.target.closest('[data-speed]');
       if (speedButton) return handleSpeed(speedButton);
+
+      const presetButton = event.target.closest('[data-preset]');
+      if (presetButton) return handlePreset(presetButton, ctx);
 
       const stepButton = event.target.closest('[data-step]');
       if (stepButton) return handleStep(root, stepButton);
@@ -450,6 +476,12 @@ export const controlView = {
     if (pauseBtn) pauseBtn.disabled = !control || !ACTIVE_STATES.has(state) || store.isPending('pause');
     if (resumeBtn) resumeBtn.disabled = !control || state !== 'paused' || store.isPending('resume');
     if (stopBtn) stopBtn.disabled = !control || !hasJob || store.isPending('stop');
+
+    // A preset would fight a job that already set its own targets.
+    const jobRunning = Boolean(printer?.job) || ACTIVE_STATES.has(state) || state === 'paused';
+    for (const button of root.querySelectorAll('[data-preset]')) {
+      button.disabled = !control || jobRunning || store.isPending('preset');
+    }
 
     const speedPct = printer?.job?.speed_pct ?? null;
     for (const button of root.querySelectorAll('[data-speed]')) {
@@ -554,6 +586,17 @@ function handleJobCommand(button, ctx) {
   });
 }
 
+function handlePreset(button, ctx) {
+  const preset = button.dataset.preset;
+  const temps = PRESET_TEMPS[preset];
+  if (!temps) return;
+  ctx.command({
+    key: 'preset',
+    label: preset === 'cool' ? 'Cool down' : `Preheat ${preset.toUpperCase()}`,
+    request: () => api.setTemps(temps),
+  });
+}
+
 function handleSpeed(button) {
   const mode = SPEED_MODES.find((m) => m.id === button.dataset.speed);
   if (!mode) return;
@@ -634,10 +677,13 @@ export const filesView = {
             <p class="muted small">G-code, up to 2 GiB. Uploads to the printer's internal storage.</p>
           </div>
           <div class="upload-state" id="upload-state" hidden>
-            <div class="bar"><span class="fill" id="upload-fill"></span></div>
+            <div class="bar" id="upload-bar" role="progressbar" aria-label="Upload progress"
+                 aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <span class="fill" id="upload-fill"></span>
+            </div>
             <div class="row between small muted">
               <span id="upload-name">—</span>
-              <span id="upload-meta">—</span>
+              <span id="upload-meta" aria-live="polite">—</span>
             </div>
           </div>
         </div>
@@ -765,6 +811,12 @@ async function loadFiles(root, ctx) {
   }
 }
 
+/** Keep the track's accessible value in step with the visual fill. */
+function setUploadProgress(fill, pct) {
+  const bar = fill?.closest('[role="progressbar"]');
+  if (bar) bar.setAttribute('aria-valuenow', String(Math.max(0, Math.min(100, Math.round(pct)))));
+}
+
 function uploadFile(root, file, onDone) {
   const state = el(root, '#upload-state');
   const fill = el(root, '#upload-fill');
@@ -775,6 +827,7 @@ function uploadFile(root, file, onDone) {
   if (name) name.textContent = file.name;
   if (meta) meta.textContent = `${fmtBytes(file.size)} · sending to the Pi…`;
   if (fill) fill.style.width = '0%';
+  setUploadProgress(fill, 0);
 
   api
     .uploadFile(file, {
@@ -782,6 +835,7 @@ function uploadFile(root, file, onDone) {
         if (!total) return;
         const pct = Math.round((sent / total) * 100);
         if (fill) fill.style.width = `${pct}%`;
+        setUploadProgress(fill, pct);
         if (meta) meta.textContent = `${fmtBytes(sent)} / ${fmtBytes(total)} · ${pct}% to the Pi`;
       },
     })
@@ -792,6 +846,7 @@ function uploadFile(root, file, onDone) {
     })
     .catch((err) => {
       if (fill) fill.style.width = '0%';
+      setUploadProgress(fill, 0);
       if (meta) meta.textContent = 'Upload failed';
       store.toast(err.message || 'Upload failed', 'error');
       if (state) state.hidden = true;
@@ -802,6 +857,7 @@ function pollTransfer(id, meta, fill, onDone) {
   if (!id) {
     if (meta) meta.textContent = 'Done';
     if (fill) fill.style.width = '100%';
+    setUploadProgress(fill, 100);
     onDone?.();
     return;
   }
@@ -818,6 +874,7 @@ function pollTransfer(id, meta, fill, onDone) {
       if (!transfer) return;
       const pct = transfer.total_bytes ? Math.round((transfer.bytes_sent / transfer.total_bytes) * 100) : 0;
       if (fill) fill.style.width = `${pct}%`;
+      setUploadProgress(fill, pct);
       if (meta) {
         meta.textContent =
           transfer.state === 'error'
@@ -826,8 +883,13 @@ function pollTransfer(id, meta, fill, onDone) {
       }
       if (transfer.state === 'done' || transfer.state === 'error') {
         clearInterval(timer);
-        if (transfer.state === 'done') store.toast(`Transfer complete: ${transfer.filename}`, 'info');
-        else store.toast(transfer.error || 'Transfer failed', 'error');
+        if (transfer.state === 'done') {
+          if (fill) fill.style.width = '100%';
+          setUploadProgress(fill, 100);
+          store.toast(`Transfer complete: ${transfer.filename}`, 'info');
+        } else {
+          store.toast(transfer.error || 'Transfer failed', 'error');
+        }
         onDone?.();
       }
     } catch {
@@ -934,6 +996,48 @@ export const aboutView = {
         </div>
 
         <div class="card">
+          <div class="card-head"><h2>Usage</h2></div>
+          <dl class="kv">
+            <div><dt>Total print time</dt><dd data-f="usage-hours">—</dd></div>
+            <div><dt>Jobs</dt><dd data-f="usage-jobs">—</dd></div>
+            <div><dt>Today</dt><dd data-f="usage-today">—</dd></div>
+            <div><dt>Last job</dt><dd data-f="usage-last">—</dd></div>
+          </dl>
+          <ol class="daybars" id="usage-days" aria-label="Print time per day, last seven days">
+            <li class="muted small">No print time recorded yet.</li>
+          </ol>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>Maintenance</h2>
+            <span class="badge badge-due" id="maint-badge" hidden>Service due</span>
+          </div>
+          <dl class="kv">
+            <div><dt>Since last service</dt><dd data-f="maint-since">—</dd></div>
+            <div><dt>Reminder</dt><dd data-f="maint-interval">—</dd></div>
+            <div><dt>Last reset</dt><dd data-f="maint-reset">—</dd></div>
+          </dl>
+          <p class="muted small" id="maint-note">
+            A reminder, not a schedule the printer knows about. Set EC_MAINTENANCE_HOURS to
+            enable it.
+          </p>
+          <button type="button" class="btn btn-wide" id="maintenance-reset" hidden>
+            Mark as serviced
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Notifications</h2></div>
+          <dl class="kv">
+            <div><dt>Push</dt><dd data-f="notify-enabled">—</dd></div>
+            <div><dt>Events</dt><dd data-f="notify-events">—</dd></div>
+            <div><dt>Delivered</dt><dd data-f="notify-sent">—</dd></div>
+            <div><dt>Last error</dt><dd data-f="notify-error">—</dd></div>
+          </dl>
+        </div>
+
+        <div class="card">
           <div class="card-head"><h2>Activity</h2></div>
           <ol class="log" id="about-log">
             <li class="muted">Nothing yet.</li>
@@ -952,6 +1056,23 @@ export const aboutView = {
         await api.logout();
       } finally {
         window.location.reload();
+      }
+    });
+
+    const reset = el(root, '#maintenance-reset');
+    reset?.addEventListener('click', async () => {
+      const ok = window.confirm(
+        'Mark the printer as serviced?\n\nThis sets the wear counter back to zero. It does not change anything on the machine.',
+      );
+      if (!ok) return;
+      reset.disabled = true;
+      try {
+        await api.resetMaintenance();
+        store.toast('Maintenance counter reset', 'info');
+      } catch (err) {
+        store.toast(err?.message || 'Could not reset the counter', 'error');
+      } finally {
+        reset.disabled = false;
       }
     });
   },
@@ -989,6 +1110,10 @@ export const aboutView = {
     setText(root, 'about-upload', yesNo(capabilities.upload));
     setText(root, 'about-history', yesNo(capabilities.history));
 
+    paintUsage(root, snapshot?.usage);
+    paintMaintenance(root, snapshot?.usage?.maintenance, capabilities.control === true);
+    paintNotifications(root, snapshot?.notifications);
+
     const log = el(root, '#about-log');
     if (!log) return;
     const entries = Array.isArray(snapshot?.log) ? snapshot.log : [];
@@ -1008,6 +1133,101 @@ export const aboutView = {
       .join('');
   },
 };
+
+/** Print hours, job counts and a week of daily bars — all from counted transitions. */
+function paintUsage(root, usage) {
+  if (!usage) return;
+  const hours = typeof usage.print_hours === 'number' ? usage.print_hours : null;
+  setText(root, 'usage-hours', hours === null ? '—' : `${hours.toFixed(1)} h`);
+
+  const jobs = usage.jobs || {};
+  const parts = [
+    jobs.completed ? `${jobs.completed} completed` : null,
+    jobs.failed ? `${jobs.failed} failed` : null,
+    jobs.stopped ? `${jobs.stopped} stopped` : null,
+  ].filter(Boolean);
+  setText(root, 'usage-jobs', parts.length ? parts.join(' · ') : 'None yet');
+  setText(root, 'usage-today', fmtDuration(usage.today_seconds || 0));
+
+  const last = usage.last_job;
+  setText(
+    root,
+    'usage-last',
+    last
+      ? `${last.filename || 'unknown'} · ${last.state} ${fmtAgo(last.ended_ts)}`
+      : '—',
+  );
+
+  const days = Array.isArray(usage.days) ? usage.days : [];
+  const signature = days.map((day) => day.seconds).join(',');
+  const list = el(root, '#usage-days');
+  if (!list || !days.length || list.dataset.signature === signature) return;
+  list.dataset.signature = signature;
+  // Scale to the busiest day, with a floor of 30 minutes so a quiet week is not a
+  // wall of full-height bars. Heights are decoration; the label carries the number.
+  const peak = Math.max(1800, ...days.map((day) => day.seconds || 0));
+  list.innerHTML = days
+    .map((day) => {
+      const seconds = day.seconds || 0;
+      const height = Math.max(2, Math.round((seconds / peak) * 100));
+      const label = new Date(`${day.date}T12:00:00`).toLocaleDateString([], {
+        weekday: 'short',
+        day: 'numeric',
+      });
+      return `<li title="${esc(label)} · ${fmtDuration(seconds)}" aria-label="${esc(label)}: ${fmtDuration(seconds)}">
+        <span class="daybar" style="height:${height}%"></span>
+        <span class="daybar-label" aria-hidden="true">${esc(label.slice(0, 2))}</span>
+      </li>`;
+    })
+    .join('');
+}
+
+function paintMaintenance(root, maintenance, canReset) {
+  const badge = el(root, '#maint-badge');
+  const button = el(root, '#maintenance-reset');
+  if (!maintenance) {
+    if (badge) badge.hidden = true;
+    if (button) button.hidden = true;
+    return;
+  }
+
+  setText(root, 'maint-since', `${(maintenance.hours_since ?? 0).toFixed(1)} h`);
+  setText(
+    root,
+    'maint-interval',
+    maintenance.interval_hours ? `every ${maintenance.interval_hours} h` : 'off',
+  );
+  setText(
+    root,
+    'maint-reset',
+    maintenance.last_reset_ts ? fmtDate(maintenance.last_reset_ts) : 'never',
+  );
+  if (badge) badge.hidden = !maintenance.due;
+  if (button) button.hidden = !canReset;
+}
+
+function paintNotifications(root, notifications) {
+  if (!notifications) return;
+  setText(
+    root,
+    'notify-enabled',
+    notifications.enabled ? `On (${notifications.format})` : 'Off',
+  );
+  setText(
+    root,
+    'notify-events',
+    Array.isArray(notifications.events) && notifications.events.length
+      ? notifications.events.join(', ')
+      : 'none',
+  );
+  const delivered = `${notifications.sent ?? 0} sent · ${notifications.failed ?? 0} failed`;
+  setText(
+    root,
+    'notify-sent',
+    notifications.dropped ? `${delivered} · ${notifications.dropped} dropped` : delivered,
+  );
+  setText(root, 'notify-error', notifications.last_error || 'none');
+}
 
 export const views = {
   now: nowView,

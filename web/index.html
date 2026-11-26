@@ -20,13 +20,19 @@
     <span id="banner-text"></span>
   </div>
 
+  <div id="notice" class="banner" data-kind="notice" role="status" aria-live="polite" hidden>
+    <span class="banner-dot" aria-hidden="true"></span>
+    <span id="notice-text"></span>
+    <button type="button" class="banner-action" id="notice-dismiss" aria-label="Dismiss">×</button>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <svg class="logo" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path d="M4 8.5 12 4l8 4.5v7L12 20l-8-4.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
         <path d="M4 8.5 12 13l8-4.5M12 13v7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
       </svg>
-      <span class="brand-name">Elegoo Connector</span>
+      <h1 class="brand-name">Elegoo Connector</h1>
     </div>
     <div class="topbar-state" id="topbar-state">
       <span class="conn-chip" data-conn="connecting">

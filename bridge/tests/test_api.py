@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 from types import SimpleNamespace
 from typing import Any
 
 import httpx
 import pytest
+from aiohttp import web
 from cc1client import camera as cc1_camera
 from cc1client import client as cc1_client
 from cc1client import upload as cc1_upload
@@ -26,7 +28,13 @@ PASSWORD = "correct horse"
 
 
 def make_config(
-    tmp_path, fake: FakePrinter, *, control: bool = True, camera_port: int | None = None
+    tmp_path,
+    fake: FakePrinter,
+    *,
+    control: bool = True,
+    camera_port: int | None = None,
+    notify_url: str | None = None,
+    metrics_token: str | None = None,
 ) -> Config:
     return Config(
         printer_host="127.0.0.1",
@@ -45,18 +53,38 @@ def make_config(
         web_dir=tmp_path / "web",  # deliberately absent: exercises the fallback route
         log_level="WARNING",
         upload_max_bytes=8 * 1024 * 1024,
+        notify_url=notify_url,
+        notify_format="json",
+        notify_events=frozenset({"finished", "failed"}),
+        metrics_token=metrics_token,
+        snapshot_cache_ms=5000,
     )
 
 
 @contextlib.asynccontextmanager
-async def rig(tmp_path, monkeypatch, *, control: bool = True, camera_port: int | None = None):
+async def rig(
+    tmp_path,
+    monkeypatch,
+    *,
+    control: bool = True,
+    camera_port: int | None = None,
+    notify_url: str | None = None,
+    metrics_token: str | None = None,
+):
     fake = FakePrinter()
     await fake.start()
     monkeypatch.setattr(cc1_client, "WS_PORT", fake.ws_port)
     monkeypatch.setattr(cc1_upload, "UPLOAD_PORT", fake.http_port)
     monkeypatch.setattr(cc1_camera, "CAMERA_PORT", fake.http_port)
 
-    config = make_config(tmp_path, fake, control=control, camera_port=camera_port)
+    config = make_config(
+        tmp_path,
+        fake,
+        control=control,
+        camera_port=camera_port,
+        notify_url=notify_url,
+        metrics_token=metrics_token,
+    )
     app = create_app(config)
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
@@ -102,7 +130,13 @@ async def online_state(client: httpx.AsyncClient) -> dict[str, Any]:
 async def test_health_is_public_but_state_is_not(tmp_path, monkeypatch) -> None:
     async with rig(tmp_path, monkeypatch) as r:
         health = await r.client.get("/healthz")
-        assert health.json() == {"ok": True, "auth": "enabled"}
+        body = health.json()
+        # Liveness for a tunnel/uptime check, plus context that is not a secret.
+        assert body["ok"] is True
+        assert body["auth"] == "enabled"
+        assert body["control"] is True
+        assert body["printer"] is None  # nothing reported yet
+        assert body["uptime_s"] >= 0
         # The shell must revalidate: `git pull` on the Pi has to show up on reload.
         assert health.headers["cache-control"] == "no-cache"
         assert (await r.client.get("/api/state")).status_code == 401
@@ -360,6 +394,24 @@ async def test_camera_snapshot_returns_jpeg(tmp_path, monkeypatch) -> None:
         assert response.content.endswith(b"\xff\xd9")
 
 
+async def test_snapshots_are_shared_between_viewers(tmp_path, monkeypatch) -> None:
+    """A dashboard, a second tab and Home Assistant must not mean three printer reads."""
+    async with rig(tmp_path, monkeypatch) as r:
+        await login(r.client)
+        await online_state(r.client)
+
+        await r.client.get("/api/camera/snapshot")  # resolves the URL and fills the cache
+        before = r.fake.video_requests
+        for _ in range(3):
+            response = await r.client.get("/api/camera/snapshot")
+            assert response.status_code == 200
+            assert response.content.startswith(b"\xff\xd8")
+        assert r.fake.video_requests == before
+
+        info = (await r.client.get("/api/camera")).json()
+        assert info["frame_age_s"] is not None
+
+
 async def test_camera_snapshot_finds_the_camera_on_another_port(tmp_path, monkeypatch) -> None:
     """A wrong EC_CAMERA_PORT must not cost the user their camera feed."""
     from elegoo_bridge import camera as bridge_camera
@@ -376,3 +428,169 @@ async def test_camera_snapshot_finds_the_camera_on_another_port(tmp_path, monkey
 
         info = (await r.client.get("/api/camera")).json()
         assert info["url"].endswith(f":{r.fake.http_port}/video")
+
+
+# --------------------------------------------------------------------------- metrics
+
+
+async def test_metrics_need_a_session_and_report_what_the_printer_said(tmp_path, monkeypatch) -> None:
+    async with rig(tmp_path, monkeypatch) as r:
+        assert (await r.client.get("/metrics")).status_code == 401
+
+        await login(r.client)
+        await online_state(r.client)
+        response = await r.client.get("/metrics")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/plain")
+
+        body = response.text
+        assert "ec_bridge_up 1" in body
+        assert "ec_printer_connected 1" in body
+        assert 'ec_printer_state{state="printing"} 1' in body
+        assert "ec_print_progress_percent 42" in body
+        assert 'ec_temperature_celsius{heater="nozzle",kind="actual"} 214.9' in body
+        assert 'ec_temperature_celsius{heater="nozzle",kind="target"} 215.0' in body
+        assert "ec_usage_print_seconds_total 0" in body
+        assert 'ec_usage_jobs_total{result="completed"} 0' in body
+        assert body.endswith("\n")
+        # Every series is preceded by its TYPE line, or Prometheus rejects the scrape.
+        assert "# TYPE ec_printer_state gauge" in body
+
+
+async def test_a_metrics_token_works_without_a_cookie(tmp_path, monkeypatch) -> None:
+    async with rig(tmp_path, monkeypatch, metrics_token="s3cret") as r:
+        assert (await r.client.get("/metrics")).status_code == 401
+        wrong = await r.client.get("/metrics", headers={"Authorization": "Bearer nope"})
+        assert wrong.status_code == 401
+
+        bearer = await r.client.get("/metrics", headers={"Authorization": "Bearer s3cret"})
+        assert bearer.status_code == 200
+        query = await r.client.get("/metrics?token=s3cret")
+        assert query.status_code == 200
+
+
+# --------------------------------------------------------------------------- usage
+
+
+def set_print_state(fake: FakePrinter, code: int, *, progress: int | None = None) -> None:
+    """Move the fake printer to another state; its push loop carries it to the bridge."""
+    fake.status["PrintInfo"]["Status"] = code
+    fake.status["CurrentStatus"] = [code]
+    if progress is not None:
+        fake.status["PrintInfo"]["Progress"] = progress
+
+
+async def wait_for_state(client: httpx.AsyncClient, slug: str) -> dict[str, Any]:
+    async def check():
+        snapshot = (await client.get("/api/state")).json()
+        return snapshot if (snapshot.get("printer") or {}).get("state") == slug else None
+
+    return await wait_for(check)
+
+
+async def test_finished_jobs_are_counted_and_maintenance_can_be_reset(tmp_path, monkeypatch) -> None:
+    async with rig(tmp_path, monkeypatch) as r:
+        await login(r.client)
+        await online_state(r.client)
+
+        empty = (await r.client.get("/api/usage")).json()
+        assert empty["print_seconds"] == 0
+        assert empty["jobs"]["completed"] == 0
+
+        set_print_state(r.fake, 9, progress=100)
+        await wait_for_state(r.client, "completed")
+
+        usage = (await r.client.get("/api/usage")).json()
+        assert usage["jobs"]["completed"] == 1
+        assert usage["print_seconds"] == 1830  # CurrentTicks of the fake job
+        assert usage["last_job"]["filename"] == "cube.gcode"
+
+        # The counter can only be reset by an authorised, same-origin write.
+        foreign = await r.client.post(
+            "/api/maintenance/reset", headers={"Origin": "https://evil.example"}
+        )
+        assert foreign.status_code == 403
+        reset = await r.client.post("/api/maintenance/reset", headers=ORIGIN)
+        assert reset.status_code == 200, reset.text
+        assert reset.json()["maintenance"]["hours_since"] == 0.0
+
+        snapshot = (await r.client.get("/api/state")).json()
+        assert snapshot["usage"]["jobs"]["completed"] == 1
+        assert snapshot["notifications"]["enabled"] is False
+
+
+async def test_a_print_that_was_already_running_is_not_counted_as_started(tmp_path, monkeypatch) -> None:
+    """Boot the bridge mid-print: that is one job, not a new one and not a notification."""
+    async with rig(tmp_path, monkeypatch) as r:
+        await login(r.client)
+        snapshot = await online_state(r.client)
+        assert snapshot["printer"]["state"] == "printing"
+
+        usage = (await r.client.get("/api/usage")).json()
+        assert usage["jobs"]["started"] == 0
+        assert not any("Started" in entry["message"] for entry in snapshot["log"])
+
+
+async def test_read_only_bridge_does_not_offer_a_maintenance_reset(tmp_path, monkeypatch) -> None:
+    async with rig(tmp_path, monkeypatch, control=False) as r:
+        await login(r.client)
+        await online_state(r.client)
+        response = await r.client.post("/api/maintenance/reset", headers=ORIGIN)
+        assert response.status_code in (404, 405)
+        # Reading the counters stays available: it is not an action.
+        assert (await r.client.get("/api/usage")).status_code == 200
+
+
+# --------------------------------------------------------------------------- notifications
+
+
+@contextlib.asynccontextmanager
+async def notify_receiver():
+    calls: list[dict[str, Any]] = []
+
+    async def handle(request: web.Request) -> web.Response:
+        calls.append({"body": await request.text(), "headers": dict(request.headers)})
+        return web.Response(text="ok")
+
+    app = web.Application()
+    app.router.add_post("/hook", handle)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]  # noqa: SLF001 - ephemeral test port
+    try:
+        yield calls, f"http://127.0.0.1:{port}/hook"
+    finally:
+        await runner.cleanup()
+
+
+async def test_a_finished_print_sends_exactly_one_notification(tmp_path, monkeypatch) -> None:
+    async with notify_receiver() as (calls, url):
+        async with rig(tmp_path, monkeypatch, notify_url=url) as r:
+            await login(r.client)
+            await online_state(r.client)
+
+            set_print_state(r.fake, 9, progress=100)
+            await wait_for_state(r.client, "completed")
+
+            async def delivered():
+                return calls or None
+
+            await wait_for(delivered)
+
+            # The push loop keeps repeating the same status frame; P13 says that is not
+            # a reason to ring a phone again.
+            for _ in range(4):
+                await asyncio.sleep(0.3)
+            assert len(calls) == 1
+
+            body = json.loads(calls[0]["body"])
+            assert body["event"] == "finished"
+            assert body["job"]["filename"] == "cube.gcode"
+
+            status = (await r.client.get("/api/state")).json()["notifications"]
+            assert status["enabled"] is True
+            assert status["sent"] == 1
+            assert status["last_sent_ts"] is not None
+            assert url not in json.dumps(status)

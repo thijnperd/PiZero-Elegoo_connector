@@ -60,6 +60,8 @@ export const api = {
   // State
   state: () => request('/api/state'),
   diagnostics: () => request('/api/diagnostics'),
+  usage: () => request('/api/usage'),
+  resetMaintenance: () => request('/api/maintenance/reset', { method: 'POST' }),
 
   events() {
     return new EventSource('/api/events');

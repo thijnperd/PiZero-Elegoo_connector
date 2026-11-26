@@ -15,15 +15,19 @@
   --panel: #171b1f;
   --panel-2: #1c2126;
   --line: #272d33;
+  --line-strong: #5f6b76;
   --line-soft: #1f2429;
 
   --text: #e7eaee;
   --muted: #97a0aa;
-  --dim: #6b747e;
+  --dim: #939ca6;
 
   --accent: #e0a03a;
   --accent-ink: #1a1408;
   --danger: #e5675d;
+  /* --danger on the tinted button background measured 4.43:1 — just under the 4.5:1
+   * that 16 px text needs — so the label gets its own, lighter tone. */
+  --danger-text: #f08a82;
   --live: #4aa8a1;
   --focus: #7aa2f7;
 
@@ -46,16 +50,17 @@
     --bg-2: #eaecf0;
     --panel: #ffffff;
     --panel-2: #f6f7f9;
-    --line: #dde1e7;
+    --line: #dde1e7;    --line-strong: #7d858f;
     --line-soft: #e8ebef;
 
     --text: #14181c;
     --muted: #5a636e;
-    --dim: #7d858f;
+    --dim: #667079;
 
     --accent: #9a6410;
     --accent-ink: #fff8ec;
     --danger: #b23a30;
+    --danger-text: #a32c25;
     --live: #14706b;
     --focus: #2f5fd0;
 
@@ -78,8 +83,8 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 16px;
+  line-height: 1.5;
   -webkit-text-size-adjust: 100%;
   display: flex;
   flex-direction: column;
@@ -116,6 +121,9 @@ a {
   z-index: 50;
   background: var(--panel);
   color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   padding: 10px 14px;
   border-radius: 0 0 var(--radius-sm) 0;
 }
@@ -154,6 +162,34 @@ a {
   background: var(--danger);
 }
 
+/* --- maintenance notice ------------------------------------------------- */
+
+.banner[data-kind="notice"] {
+  background: color-mix(in oklab, var(--accent) 18%, var(--bg-2));
+  border-bottom-color: color-mix(in oklab, var(--accent) 42%, transparent);
+}
+
+.banner-action {
+  margin-left: auto;
+  appearance: none;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 1.05rem;
+  line-height: 1;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 8px;
+  cursor: pointer;
+  opacity: 0.75;
+}
+
+.banner-action:hover,
+.banner-action:focus-visible {
+  opacity: 1;
+}
+
 /* --- top bar ------------------------------------------------------------ */
 
 .topbar {
@@ -179,8 +215,11 @@ a {
 }
 
 .brand-name {
+  /* An h1 for the document outline, but still the same 0.92 rem brand text. */
+  margin: 0;
   font-size: 0.92rem;
   font-weight: 600;
+  line-height: 1.5;
   letter-spacing: 0.01em;
   white-space: nowrap;
   overflow: hidden;
@@ -249,7 +288,7 @@ a {
   min-height: 44px;
   text-decoration: none;
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   letter-spacing: 0.02em;
 }
 
@@ -260,6 +299,8 @@ a {
 
 .tabs a[aria-current="page"] {
   color: var(--text);
+  /* A 2 px rule above the icon: the active tab is marked by shape as well as colour. */
+  box-shadow: inset 0 2px 0 var(--text);
 }
 
 .tabs a[aria-current="page"] svg {
@@ -396,7 +437,7 @@ main:focus {
 }
 
 .stale-tag {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent);
@@ -466,7 +507,7 @@ main:focus {
 
 .times dt,
 .kv dt {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--dim);
@@ -563,7 +604,7 @@ main:focus {
 }
 
 .gauge-foot {
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -602,15 +643,17 @@ main:focus {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  color: var(--dim);
+  /* The frame is near-black in both themes, so this text cannot follow a theme token:
+   * --muted is dark in the light theme and fell to 3.03:1. A fixed 8:1 grey instead. */
+  color: #a7b0ba;
   font-size: 0.85rem;
   padding: 20px;
   text-align: center;
 }
 
 .camera-empty small {
-  font-size: 0.72rem;
-  opacity: 0.8;
+  font-size: 0.75rem;
+  color: #a7b0ba;
 }
 
 .camera-bar {
@@ -627,7 +670,7 @@ main:focus {
 }
 
 .badge {
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 700;
   letter-spacing: 0.1em;
   padding: 3px 7px;
@@ -643,6 +686,13 @@ main:focus {
   background: color-mix(in oklab, var(--live) 14%, transparent);
 }
 
+/* A reminder that needs a human, so it uses the attention colour — and a word. */
+.badge-due {
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
 /* --- controls ----------------------------------------------------------- */
 
 .btn {
@@ -654,11 +704,11 @@ main:focus {
   min-height: 44px;
   padding: 0 15px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel-2);
   color: var(--text);
   font: inherit;
-  font-size: 0.88rem;
+  font-size: 1rem;
   font-weight: 500;
   text-decoration: none;
   cursor: pointer;
@@ -680,9 +730,9 @@ main:focus {
 }
 
 .btn-small {
-  min-height: 34px;
-  padding: 0 11px;
-  font-size: 0.8rem;
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 0.9rem;
 }
 
 .btn-wide {
@@ -698,7 +748,7 @@ main:focus {
 }
 
 .btn-danger {
-  color: var(--danger);
+  color: var(--danger-text);
   border-color: color-mix(in oklab, var(--danger) 38%, var(--line));
   background: color-mix(in oklab, var(--danger) 9%, var(--panel-2));
 }
@@ -722,6 +772,13 @@ main:focus {
   gap: 6px;
 }
 
+/* Four columns of "Silent / Quiet / Normal / Sport" stop fitting around 360 px. */
+@media (max-width: 380px) {
+  .seg {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 .seg button {
   appearance: none;
   display: flex;
@@ -731,17 +788,17 @@ main:focus {
   min-height: 52px;
   justify-content: center;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel-2);
   color: var(--muted);
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.9rem;
   cursor: pointer;
   touch-action: manipulation;
 }
 
 .seg button small {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--dim);
   font-variant-numeric: tabular-nums;
 }
@@ -786,7 +843,8 @@ input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 28px;
+  /* The track stays 6 px; the box around it is what a thumb has to hit. */
+  height: 44px;
   background: transparent;
   cursor: pointer;
 }
@@ -859,7 +917,7 @@ input[type="range"]:disabled {
   width: 100%;
   padding: 0 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   background: var(--panel-2);
   color: var(--text);
   font: inherit;
@@ -886,7 +944,7 @@ input[type="range"]:disabled {
 
 .table th {
   text-align: left;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--dim);
@@ -972,11 +1030,11 @@ input[type="range"]:disabled {
 
 .log-time {
   color: var(--dim);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 .log-level {
-  font-size: 0.64rem;
+  font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--dim);
@@ -1155,6 +1213,43 @@ input[type="range"]:disabled {
   .cell-name {
     max-width: none;
   }
+}
+
+/* --- usage bars ---------------------------------------------------------- */
+
+.daybars {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  align-items: end;
+  list-style: none;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.daybars li {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 6px;
+  height: 64px;
+  margin: 0;
+  padding: 0;
+}
+
+.daybar {
+  align-self: end;
+  width: 100%;
+  min-height: 2px;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in oklab, var(--live) 55%, var(--line));
+}
+
+.daybar-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-align: center;
+  color: var(--dim);
 }
 
 @media (prefers-reduced-motion: reduce) {

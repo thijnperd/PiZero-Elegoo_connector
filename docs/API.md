@@ -66,6 +66,26 @@ so a reconnecting client can replace its state atomically.
     "light": true,
     "position": [10.0, 20.0, 0.4]
   },
+  "usage": {
+    "print_seconds": 41220,
+    "print_hours": 11.5,
+    "today_seconds": 1800,
+    "jobs": { "started": 9, "completed": 7, "failed": 1, "stopped": 1 },
+    "days": [{ "date": "2026-10-24", "seconds": 3600 }],
+    "last_job": { "filename": "cube.gcode", "state": "finished", "ended_ts": 1761819990.0, "seconds": 2480 },
+    "maintenance": { "interval_hours": 200.0, "hours_since": 11.5, "due": false, "last_reset_ts": 1761800000.0 }
+  },
+  "notifications": {
+    "enabled": true,
+    "format": "ntfy",
+    "events": ["failed", "finished"],
+    "sent": 2,
+    "failed": 0,
+    "dropped": 0,
+    "queued": 0,
+    "last_sent_ts": 1761819992.0,
+    "last_error": null
+  },
   "log": [
     { "ts": 1761819990.0, "level": "info", "kind": "job_started", "message": "Started cube.gcode" }
   ]
@@ -85,6 +105,12 @@ Rules the server guarantees:
 - `printer.attention` is `true` for `error`, `paused`, and firmware states that need a
   human; it drives the single accent colour in the UI.
 - `log` is newest-first, capped at 50 entries.
+- `usage` and `notifications` are additive and always present. `usage.days` holds seven
+  entries, oldest first; `usage.jobs.started` counts jobs begun, not files uploaded.
+- `notifications.enabled` is false when `EC_NOTIFY_URL` is unset. The URL, token and chat
+  id are never part of any response.
+- `notifications.events` lists the transitions that will be pushed. A transition is
+  announced once per state change, so a repeated status frame produces nothing here.
 
 ### Temperature fields
 
@@ -102,7 +128,7 @@ does not report a box temperature. Never infer a target from an actual.
 | `GET` | `/login` | — | HTML login page (only when auth is enabled) |
 | `POST` | `/api/login` | `{"password": "..."}` | `204` + `Set-Cookie: ec_session=...` |
 | `POST` | `/api/logout` | — | `204` |
-| `GET` | `/healthz` | — | `{"ok": true, "auth": "enabled"\|"disabled"}` |
+| `GET` | `/healthz` | — | `{"ok": true, "auth": "enabled"\|"disabled", "control": true, "uptime_s": 120, "printer": "printing"\|"idle"\|null, "connection": "online"}` |
 
 Failed login: `401 {"detail": "invalid password"}`. Rate limited to 5 attempts / 5 min
 per client address.
@@ -117,6 +143,35 @@ per client address.
 
 The SSE stream is the primary update channel. It sends one snapshot immediately on
 connect, then on every change, throttled to at most 2 per second.
+
+### Usage and maintenance
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/usage` | the `usage` object on its own, if a poller does not want the whole snapshot |
+| `POST` | `/api/maintenance/reset` | control + same-origin only. Sets the wear counter back to zero and returns `{"maintenance": {...}}`. It changes nothing on the printer. |
+
+The counters live in `usage.json` in the state directory and are written on a transition,
+not on a timer. Deleting that file resets history, which is the intended way to do it.
+
+### Metrics
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/metrics` | Prometheus text exposition (`version=0.0.4`) |
+
+Requires the session cookie, or — because a scraper has no cookie jar — the bearer token
+from `EC_METRICS_TOKEN` (`Authorization: Bearer …`, or `?token=…` for a scraper that cannot
+set headers). Values come from the same snapshot the UI renders, and a value the printer
+did not report is **absent** rather than zero. Series: `ec_bridge_up`,
+`ec_bridge_uptime_seconds`, `ec_bridge_frames_total`, `ec_bridge_commands_total`,
+`ec_bridge_reconnects_total`, `ec_printer_connected`, `ec_printer_stale`,
+`ec_printer_state{state}`, `ec_job_active`, `ec_print_progress_percent`, `ec_print_layer`,
+`ec_print_layers_total`, `ec_print_remaining_seconds`,
+`ec_temperature_celsius{heater,kind}`, `ec_fan_percent{fan}`, `ec_camera_viewers`,
+`ec_usage_print_seconds_total`, `ec_usage_jobs_total{result}`,
+`ec_maintenance_due`, `ec_maintenance_hours_since_service`, `ec_notifications_sent_total`,
+`ec_notifications_failed_total`, `ec_notifications_dropped_total`.
 
 ### Job control — all gated on `capabilities.control`
 
@@ -167,7 +222,7 @@ uploads when `capabilities.upload` is false.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/camera/stream` | `multipart/x-mixed-replace` MJPEG, fanned out from **one** upstream connection. Cache-busting query allowed. |
-| `GET` | `/api/camera/snapshot` | single `image/jpeg`, `Cache-Control: no-store` |
+| `GET` | `/api/camera/snapshot` | single `image/jpeg`, `Cache-Control: no-store`. Frames are shared for `EC_SNAPSHOT_CACHE_MS` (default 800 ms), so several viewers cost one camera read and concurrent requests wait for the read already in flight. |
 | `GET` | `/api/camera` | `{"available": true, "viewers": 1, "frame_age_s": null, "url": "http://<printer>:3031/video"}` |
 
 The camera's port is the one part of the protocol that differs between firmware builds, so
@@ -202,3 +257,6 @@ Error bodies are always `{"detail": "human readable message"}`.
 - `EC_CONTROL=0` (the default) registers no mutating routes at all.
 - Remote access is a private network (Tailscale) or an authenticated tunnel
   (Cloudflare Access). Never port-forward the bridge or the printer.
+- `/metrics` is the one route with a second way in, because Prometheus cannot complete a
+  login form. Set `EC_METRICS_TOKEN` to a long random value and scrape over the tunnel; with
+  the variable unset, the endpoint only accepts a browser session like every other route.

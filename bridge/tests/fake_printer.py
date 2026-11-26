@@ -83,6 +83,8 @@ class FakePrinter:
         ]
         self.upload_chunks: list[dict[str, Any]] = []
         self.upload_bytes = 0
+        #: Snapshot/stream reads, so a test can prove the bridge collapsed them.
+        self.video_requests = 0
         self.connections = 0
         self.max_connections = 0
         self.ws_port = 0
@@ -282,6 +284,7 @@ class FakePrinter:
         return web.json_response({"code": "000000", "messages": None, "data": {}, "success": True})
 
     async def _handle_video(self, _request: web.Request) -> web.StreamResponse:
+        self.video_requests += 1
         response = web.StreamResponse(
             status=200,
             headers={"Content-Type": "multipart/x-mixed-replace; boundary=frame"},

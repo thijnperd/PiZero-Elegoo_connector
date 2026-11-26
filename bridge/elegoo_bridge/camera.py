@@ -12,8 +12,10 @@ costs one request per candidate and nothing on the printer beyond that.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
+from typing import Awaitable, Callable
 
 import httpx
 
@@ -25,6 +27,43 @@ PROBE_TIMEOUT_S = 3.0
 #: Once every candidate has failed, wait this long before probing again. A printer
 #: that is switched off would otherwise add probe latency to every snapshot.
 RETRY_AFTER_S = 30.0
+
+
+class SnapshotCache:
+    """Serve one recent frame to every viewer instead of one read each.
+
+    The camera is the most fragile part of the printer: one MJPEG reader is fine, but a
+    dashboard, a Home Assistant poll and a second tab each taking a snapshot means three
+    HTTP reads and three decodes of the same instant. A short cache collapses them into
+    one, and the single-flight lock means simultaneous requests wait for the read that is
+    already happening instead of starting another.
+    """
+
+    def __init__(self, ttl_s: float) -> None:
+        self.ttl_s = max(0.0, ttl_s)
+        self._frame: bytes = b""
+        self._at: float = 0.0
+        self._lock = asyncio.Lock()
+
+    @property
+    def frame_age_s(self) -> float | None:
+        return None if not self._frame else round(time.monotonic() - self._at, 1)
+
+    def invalidate(self) -> None:
+        self._frame = b""
+        self._at = 0.0
+
+    async def get(self, fetch: Callable[[], Awaitable[bytes]]) -> bytes:
+        if self._frame and time.monotonic() - self._at < self.ttl_s:
+            return self._frame
+        async with self._lock:
+            # A request that queued behind the lock gets the frame that just landed.
+            if self._frame and time.monotonic() - self._at < self.ttl_s:
+                return self._frame
+            frame = await fetch()
+            self._frame = frame
+            self._at = time.monotonic()
+            return frame
 
 
 class CameraEndpoint:

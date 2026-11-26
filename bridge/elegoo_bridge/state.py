@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from cc1client.models import Attributes, PrintStatus, Status
 
@@ -199,6 +200,9 @@ class _Conn:
     mainboard_id: str | None = None
     reconnects: int = 0
     last_error: str | None = None
+    #: Whether this process has ever been online. The first connect is not a
+    #: reconnect, and counting it made a freshly started bridge claim one.
+    ever_online: bool = False
 
 
 class StateStore:
@@ -213,6 +217,11 @@ class StateStore:
         self._last_frame_ts: float | None = None
         self._log: deque[LogEntry] = deque(maxlen=LOG_MAX)
         self._previous_slug: str | None = None
+        #: Everyone who wants to know about a transition (notifications, usage counting).
+        #: Called from the printer loop, so a slow handler is a slow printer link: the
+        #: subscribers here only queue or count, never do I/O inline.
+        self._handlers: list[Callable[[dict[str, Any]], None]] = []
+        self._extra: Callable[[], dict[str, Any]] | None = None
         self._queues: set[asyncio.Queue[dict[str, Any]]] = set()
         self._dirty = asyncio.Event()
         self._flusher: asyncio.Task[None] | None = None
@@ -248,8 +257,10 @@ class StateStore:
             self._conn.state = state
             self._conn.since_ts = time.time()
             if state == "online":
-                self._conn.reconnects += 1
-                self._counter["reconnects"] += 1
+                if self._conn.ever_online:
+                    self._conn.reconnects += 1
+                    self._counter["reconnects"] += 1
+                self._conn.ever_online = True
                 self.log("Connected to printer", kind="connection")
             elif state == "offline":
                 self.log(f"Printer unreachable{f': {error}' if error else ''}", level="warn", kind="connection")
@@ -281,6 +292,20 @@ class StateStore:
         self._counter["commands"] += 1
         self.log(message, level=level, kind="command")
 
+    # --- subscribers -------------------------------------------------------
+
+    def on_event(self, handler: Callable[[dict[str, Any]], None]) -> None:
+        """Subscribe to job transitions: started, finished, failed, paused, resumed, stopped."""
+        self._handlers.append(handler)
+
+    def set_extra(self, provider: Callable[[], dict[str, Any]] | None) -> None:
+        """Extra top-level snapshot fields (usage counters, notification status).
+
+        A provider rather than stored values, because the snapshot is rebuilt on every
+        flush and the numbers in it change without a printer frame arriving.
+        """
+        self._extra = provider
+
     # --- reads -------------------------------------------------------------
 
     def snapshot(self) -> dict[str, Any]:
@@ -291,7 +316,14 @@ class StateStore:
             stale = age is None or age > STALE_AFTER_S
             printer["stale"] = stale
             printer["stale_for_s"] = 0 if age is None else round(age, 1)
+        extra: dict[str, Any] = {}
+        if self._extra is not None:
+            try:
+                extra = self._extra() or {}
+            except Exception:  # noqa: BLE001 - an add-on must not break the state route
+                extra = {}
         return {
+            **extra,
             "schema": SCHEMA,
             "ts": round(now, 3),
             "connection": {
@@ -354,19 +386,48 @@ class StateStore:
             return
         job = printer.get("job") or {}
         name = job.get("filename") or "print"
-        if slug == "printing" and previous in (None, "idle", "starting", "leveling", "preheating"):
+        event: str | None = None
+        # A job is announced when the printer moves into printing from a state that cannot
+        # be a resume. ``previous is None`` means this is the first frame after the bridge
+        # connected: a print that was already running is not news, and counting it would
+        # also inflate the usage totals by one job per restart (P1, P13).
+        if slug == "printing" and previous in ("idle", "starting", "leveling", "preheating", "completed", "stopped", "error"):
             self.log(f"Started {name}", kind="job_started")
+            event = "started"
         elif slug == "completed":
             self.log(f"Finished {name}", kind="job_finished")
+            event = "finished"
         elif slug == "error":
             self.log(f"Printer reported an error on {name}", level="error", kind="job_failed")
+            event = "failed"
         elif slug == "paused":
             self.log("Print paused", level="warn", kind="job_paused")
+            event = "paused"
         elif slug == "resuming":
             self.log("Resuming print", kind="job_resumed")
+            event = "resumed"
         elif slug == "stopped":
             self.log(f"Print stopped: {name}", level="warn", kind="job_stopped")
+            event = "stopped"
         elif slug == "preheating" and previous != "preheating":
             self.log("Preheating", kind="progress")
         elif slug == "leveling":
             self.log("Auto-levelling", kind="progress")
+        if event is not None:
+            self._dispatch(
+                {
+                    "event": event,
+                    "state": slug,
+                    "previous": previous,
+                    "ts": round(time.time(), 1),
+                    "job": printer.get("job"),
+                    "error": printer.get("error"),
+                }
+            )
+
+    def _dispatch(self, event: dict[str, Any]) -> None:
+        for handler in list(self._handlers):
+            try:
+                handler(event)
+            except Exception:  # noqa: BLE001 - one broken subscriber, not a dead printer link
+                logging.getLogger(__name__).exception("transition handler failed")

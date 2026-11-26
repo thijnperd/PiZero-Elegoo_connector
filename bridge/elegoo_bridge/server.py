@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, status
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.datastructures import MutableHeaders
@@ -41,14 +41,17 @@ from .auth import (
     require_session,
     reset_login_attempts,
 )
-from .camera import CameraEndpoint
+from .camera import CameraEndpoint, SnapshotCache
 from .config import Config, load_config
+from .notify import Notifier, NotifySettings, same_token
 from .printer import Supervisor
 from .state import StateStore
+from .usage import UsageStore
 
 log = logging.getLogger(__name__)
 
 SPEED_MODES = {"silent": 50, "balanced": 100, "sport": 130, "ludicrous": 160}
+METRICS_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 UPLOAD_CHUNK = 1024 * 1024
 MIN_WRITE_INTERVAL_S = 0.25
 HISTORY_STATUS = {1: "completed", 2: "cancelled", 3: "cancelled"}
@@ -266,12 +269,36 @@ def create_app(config: Config | None = None) -> FastAPI:
     )
     camera = CameraBroadcaster(lambda: camera_endpoint.current_url)
     uploads = UploadManager(config, store, supervisor)
+    snapshots = SnapshotCache(config.snapshot_cache_ms / 1000.0)
+    usage = UsageStore(
+        Path(config.state_dir) / "usage.json",
+        maintenance_hours=config.maintenance_hours,
+        on_log=store.log,
+    )
+    notifier = Notifier(
+        NotifySettings(
+            url=config.notify_url or "",
+            format=config.notify_format,
+            events=config.notify_events,
+            token=config.notify_token,
+            target=config.notify_target,
+        )
+        if config.notify_url
+        else None,
+        on_log=store.log,
+    )
+    # Both subscribers only count or queue; the printer loop never waits on the network.
+    store.on_event(usage.handle)
+    store.on_event(notifier.handle)
+    store.set_extra(lambda: {"usage": usage.snapshot(), "notifications": notifier.status()})
+    started_at = time.time()
     write_lock = asyncio.Lock()
     last_write = {"ts": 0.0}
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         store.start()
+        notifier.start()
         supervisor.start()
         log.info(
             "bridge up: printer=%s control=%s auth=%s web=%s",
@@ -286,6 +313,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             await supervisor.close()
             await uploads.close()
             await camera.close()
+            await notifier.close()
             await store.close()
 
     app = FastAPI(title="Elegoo Connector", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -294,6 +322,8 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.state.supervisor = supervisor
     app.state.camera = camera
     app.state.uploads = uploads
+    app.state.usage = usage
+    app.state.notifier = notifier
 
     app.add_middleware(ShellRevalidationMiddleware)
 
@@ -303,7 +333,40 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
-        return {"ok": True, "auth": "enabled" if config.auth_enabled else "disabled"}
+        """Unauthenticated liveness plus enough context for a tunnel or uptime check."""
+        printer = store._printer  # noqa: SLF001 - read-only peek, no snapshot copy needed
+        return {
+            "ok": True,
+            "auth": "enabled" if config.auth_enabled else "disabled",
+            "control": config.control,
+            "uptime_s": int(time.time() - started_at),
+            "printer": None if printer is None else printer.get("state"),
+            "connection": store._conn.state,  # noqa: SLF001
+        }
+
+    async def metrics_auth(request: Request) -> None:
+        """A scraper has no cookie jar: a bearer token, or the session, or nothing."""
+        if config.metrics_token:
+            header = request.headers.get("authorization", "")
+            token = header[7:].strip() if header.lower().startswith("bearer ") else request.query_params.get("token")
+            if not same_token(config.metrics_token, token):
+                raise HTTPException(status_code=401, detail="invalid metrics token")
+            return
+        if not is_authenticated(config, request):
+            raise HTTPException(status_code=401, detail="not authenticated")
+
+    @app.get("/metrics", dependencies=[Depends(metrics_auth)])
+    async def metrics() -> PlainTextResponse:
+        snapshot = store.snapshot()
+        body = render_metrics(
+            snapshot=snapshot,
+            counters=store.counters(),
+            usage=snapshot.get("usage") or usage.snapshot(),
+            notifications=snapshot.get("notifications") or notifier.status(),
+            camera_viewers=len(getattr(camera, "_subscribers", ()) or ()),
+            uptime_s=int(time.time() - started_at),
+        )
+        return PlainTextResponse(body, media_type=METRICS_TYPE)
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request) -> HTMLResponse:
@@ -378,11 +441,17 @@ def create_app(config: Config | None = None) -> FastAPI:
             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
         )
 
+    @app.get("/api/usage", dependencies=[session])
+    async def get_usage() -> dict[str, Any]:
+        return usage.snapshot()
+
     @app.get("/api/diagnostics", dependencies=[session])
     async def diagnostics() -> dict[str, Any]:
         return {
             "snapshot": store.snapshot(),
             "counters": store.counters(),
+            "usage": usage.snapshot(),
+            "notifications": notifier.status(),
             "config": {
                 "printer_host": config.printer_host,
                 "control": config.control,
@@ -407,7 +476,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         return {
             "available": _camera_available(),
             "viewers": viewers,
-            "frame_age_s": None,
+            "frame_age_s": snapshots.frame_age_s,
             "url": camera_endpoint.current_url,
         }
 
@@ -417,11 +486,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=502, detail="no printer configured")
         url = await camera_endpoint.resolve()
         try:
-            frame = await camera_snapshot(url=url)
+            frame = await snapshots.get(lambda: camera_snapshot(url=url))
         except Exception as err:  # noqa: BLE001 - httpx errors vary by version
             # The cached address may be stale (firmware change, printer reboot on a
-            # new port): forget it so the next request probes again.
+            # new port): forget both, so the next request probes and reads again.
             camera_endpoint.invalidate()
+            snapshots.invalidate()
             raise HTTPException(status_code=502, detail=f"camera unavailable: {err}") from err
         return Response(content=frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
@@ -596,6 +666,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             printer = _printer_or_502(supervisor)
             return await _command("light", lambda: printer.set_light(body.on))
 
+        @app.post("/api/maintenance/reset", dependencies=[session])
+        async def reset_maintenance(request: Request) -> dict[str, Any]:
+            require_same_origin(request)
+            result = usage.reset_maintenance()
+            return {"maintenance": result}
+
         @app.post("/api/files/delete", dependencies=[session])
         async def delete_files(request: Request, body: DeleteBody) -> dict[str, Any]:
             require_same_origin(request)
@@ -682,6 +758,106 @@ class ShellRevalidationMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_header)
+
+
+def _label(value: Any) -> str:
+    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def render_metrics(
+    *,
+    snapshot: dict[str, Any],
+    counters: dict[str, int],
+    usage: dict[str, Any],
+    notifications: dict[str, Any],
+    camera_viewers: int,
+    uptime_s: int,
+) -> str:
+    """Prometheus text exposition (0.0.4), built from the snapshot we already have.
+
+    Only facts the printer reported: a gauge is absent rather than zero when the value
+    is unknown, because a graph of "0 °C" while the link is down is a lie (P6).
+    """
+    connection = snapshot.get("connection") or {}
+    printer = snapshot.get("printer") or None
+    job = (printer or {}).get("job") or {}
+    lines: list[str] = []
+
+    def metric(name: str, kind: str, help_text: str) -> None:
+        lines.append(f"# HELP {name} {help_text}")
+        lines.append(f"# TYPE {name} {kind}")
+
+    def sample(name: str, value: Any, **labels: Any) -> None:
+        if value is None:
+            return
+        if labels:
+            rendered = ",".join(f'{key}="{_label(val)}"' for key, val in labels.items())
+            lines.append(f"{name}{{{rendered}}} {value}")
+        else:
+            lines.append(f"{name} {value}")
+
+    metric("ec_bridge_up", "gauge", "1 while the bridge is serving requests.")
+    sample("ec_bridge_up", 1)
+    metric("ec_bridge_uptime_seconds", "gauge", "Seconds since the bridge started.")
+    sample("ec_bridge_uptime_seconds", uptime_s)
+    metric("ec_bridge_frames_total", "counter", "Status frames received from the printer.")
+    sample("ec_bridge_frames_total", counters.get("frames"))
+    metric("ec_bridge_commands_total", "counter", "Commands the bridge accepted.")
+    sample("ec_bridge_commands_total", counters.get("commands"))
+    metric("ec_bridge_reconnects_total", "counter", "Printer link reconnects.")
+    sample("ec_bridge_reconnects_total", counters.get("reconnects"))
+
+    metric("ec_printer_connected", "gauge", "1 when the printer WebSocket is online.")
+    sample("ec_printer_connected", 1 if connection.get("state") == "online" else 0)
+    metric("ec_printer_stale", "gauge", "1 when the last status frame is older than the stale threshold.")
+    sample("ec_printer_stale", None if printer is None else int(bool(printer.get("stale"))))
+    metric("ec_printer_state", "gauge", "Current printer state; 1 for the active slug.")
+    if printer and printer.get("state"):
+        lines.append(f'ec_printer_state{{state="{_label(printer["state"])}"}} 1')
+    metric("ec_job_active", "gauge", "1 while a job occupies the printer.")
+    sample("ec_job_active", 1 if job else 0)
+    metric("ec_print_progress_percent", "gauge", "Progress of the current job.")
+    sample("ec_print_progress_percent", job.get("progress"))
+    metric("ec_print_layer", "gauge", "Current layer of the active job.")
+    sample("ec_print_layer", job.get("layer"))
+    metric("ec_print_layers_total", "gauge", "Layer count of the active job.")
+    sample("ec_print_layers_total", job.get("total_layers"))
+    metric("ec_print_remaining_seconds", "gauge", "Seconds remaining on the active job.")
+    sample("ec_print_remaining_seconds", job.get("remaining_s"))
+
+    metric("ec_temperature_celsius", "gauge", "Temperature per heater, actual or target.")
+    for heater, reading in ((printer or {}).get("temps") or {}).items():
+        for kind in ("actual", "target"):
+            value = (reading or {}).get(kind)
+            if value is not None:
+                lines.append(f'ec_temperature_celsius{{heater="{_label(heater)}",kind="{kind}"}} {value}')
+    metric("ec_fan_percent", "gauge", "Fan speed per fan, as the printer reports it.")
+    for fan, value in ((printer or {}).get("fans") or {}).items():
+        if value is not None:
+            lines.append(f'ec_fan_percent{{fan="{_label(fan)}"}} {value}')
+
+    metric("ec_camera_viewers", "gauge", "Browsers currently watching the MJPEG stream.")
+    sample("ec_camera_viewers", camera_viewers)
+
+    metric("ec_usage_print_seconds_total", "counter", "Print time the bridge has counted, in seconds.")
+    sample("ec_usage_print_seconds_total", usage.get("print_seconds"))
+    metric("ec_usage_jobs_total", "counter", "Jobs by result.")
+    for result, value in (usage.get("jobs") or {}).items():
+        lines.append(f'ec_usage_jobs_total{{result="{_label(result)}"}} {value}')
+    metric("ec_maintenance_due", "gauge", "1 when the configured service interval has passed.")
+    maintenance = usage.get("maintenance") or {}
+    sample("ec_maintenance_due", 1 if maintenance.get("due") else 0)
+    metric("ec_maintenance_hours_since_service", "gauge", "Print hours since the counter was reset.")
+    sample("ec_maintenance_hours_since_service", maintenance.get("hours_since"))
+
+    metric("ec_notifications_sent_total", "counter", "Delivered push notifications.")
+    sample("ec_notifications_sent_total", notifications.get("sent"))
+    metric("ec_notifications_failed_total", "counter", "Notifications that could not be delivered.")
+    sample("ec_notifications_failed_total", notifications.get("failed"))
+    metric("ec_notifications_dropped_total", "counter", "Notifications dropped because the queue was full.")
+    sample("ec_notifications_dropped_total", notifications.get("dropped"))
+
+    return "\n".join(lines) + "\n"
 
 
 def _printer_or_502(supervisor: Supervisor):

@@ -94,6 +94,9 @@ def test_store_marks_stale_values() -> None:
 
 def test_store_logs_job_transitions_only() -> None:
     store = StateStore(printer_host="127.0.0.1", control=True)
+    # Idle first: a store that opens on a printing frame must not call that a start, or
+    # every bridge restart mid-print would announce a job that began hours ago.
+    store.set_status(Status.from_payload(status_payload(state=0, filename=None)))
     store.set_status(Status.from_payload(status_payload(state=13)))
     store.set_status(Status.from_payload(status_payload(state=13, progress=43)))
     store.set_status(Status.from_payload(status_payload(state=6)))
@@ -103,6 +106,42 @@ def test_store_logs_job_transitions_only() -> None:
     assert "job_paused" in kinds
     # A progress update is not an event worth announcing.
     assert kinds.count("progress") == 0
+
+
+def test_opening_on_a_running_print_announces_nothing() -> None:
+    store = StateStore(printer_host="127.0.0.1", control=True)
+    seen: list[dict[str, object]] = []
+    store.on_event(seen.append)
+    store.set_status(Status.from_payload(status_payload(state=13)))
+
+    assert seen == []
+    assert [entry["kind"] for entry in store.snapshot()["log"]] == []
+
+
+def test_transitions_reach_subscribers_once() -> None:
+    store = StateStore(printer_host="127.0.0.1", control=True)
+    seen: list[dict[str, object]] = []
+    store.on_event(seen.append)
+    store.set_status(Status.from_payload(status_payload(state=0, filename=None)))
+    store.set_status(Status.from_payload(status_payload(state=13)))
+    store.set_status(Status.from_payload(status_payload(state=13, progress=60)))
+    store.set_status(Status.from_payload(status_payload(state=9)))
+
+    assert [item["event"] for item in seen] == ["started", "finished"]
+    assert seen[1]["job"]["filename"] == "cube.gcode"
+
+
+def test_a_broken_subscriber_does_not_break_the_link() -> None:
+    store = StateStore(printer_host="127.0.0.1", control=True)
+
+    def boom(_event: dict[str, object]) -> None:
+        raise RuntimeError("subscriber bug")
+
+    store.on_event(boom)
+    store.set_status(Status.from_payload(status_payload(state=0, filename=None)))
+    # The transition still happened and still reached the log.
+    store.set_status(Status.from_payload(status_payload(state=13)))
+    assert [entry["kind"] for entry in store.snapshot()["log"]] == ["job_started"]
 
 
 async def test_subscribers_receive_coalesced_snapshots() -> None:
@@ -129,3 +168,18 @@ def test_capabilities_follow_config() -> None:
 
     controllable = StateStore(printer_host="x", control=True)
     assert controllable.snapshot()["capabilities"]["control"] is True
+
+
+def test_first_connection_is_not_a_reconnect() -> None:
+    """A freshly started bridge reports zero reconnects."""
+    store = StateStore(printer_host="printer", control=False)
+
+    store.set_connection("online")
+    assert store.snapshot()["connection"]["reconnects"] == 0
+
+    store.set_connection("offline", error="timeout")
+    store.set_connection("online")
+    assert store.snapshot()["connection"]["reconnects"] == 1
+
+    store.set_connection("online")  # unchanged state must not bump the counter
+    assert store.snapshot()["connection"]["reconnects"] == 1

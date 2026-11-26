@@ -9,6 +9,9 @@ import { views, esc as escapeHtml } from './views.js';
 const root = document.getElementById('view');
 const banner = document.getElementById('banner');
 const bannerText = document.getElementById('banner-text');
+const notice = document.getElementById('notice');
+const noticeText = document.getElementById('notice-text');
+const noticeDismiss = document.getElementById('notice-dismiss');
 const tabs = document.getElementById('tabs');
 const topbarConn = document.getElementById('topbar-conn-text');
 const topbarChip = document.querySelector('.conn-chip');
@@ -200,6 +203,8 @@ function applySnapshotToView() {
 function renderView(reason) {
   const id = currentViewId();
   const changed = id !== currentView?.id;
+  // The first paint is not a navigation, so it must not pull focus away from the page.
+  const initial = !currentView;
   if (changed) {
     camera.detach();
     currentView = views[id];
@@ -215,6 +220,9 @@ function renderView(reason) {
     currentView.mount?.(root, ctx);
     applySnapshotToView();
     window.scrollTo(0, 0);
+    // A hash change swaps the whole view; without this, focus stays on the tab link and
+    // the next Tab press walks the old page. #view already has tabindex="-1".
+    if (!initial && reason === 'route') root.focus({ preventScroll: true });
   } else if (reason !== 'pending') {
     applySnapshotToView();
   }
@@ -223,6 +231,40 @@ function renderView(reason) {
   ctx.readOnly = snapshot?.capabilities?.control !== true;
   if (id === 'control' && reason === 'pending') applySnapshotToView();
 }
+
+/**
+ * The maintenance reminder, on every screen instead of only in About.
+ * Dismissal is keyed to the last reset timestamp: acknowledging one reminder does
+ * not silence the next one after the counter has been reset.
+ */
+const NOTICE_KEY = 'ec.notice.dismissed';
+
+function paintNotice(snapshot) {
+  if (!notice) return;
+  const maintenance = snapshot?.usage?.maintenance;
+  let dismissed = '';
+  try {
+    dismissed = localStorage.getItem(NOTICE_KEY) || '';
+  } catch {
+    dismissed = '';
+  }
+  const stamp = String(maintenance?.last_reset_ts ?? 0);
+  const due = Boolean(maintenance?.due) && dismissed !== stamp;
+  notice.hidden = !due;
+  if (!due || !noticeText) return;
+  const hours = Number(maintenance.hours_since ?? 0).toFixed(1);
+  noticeText.textContent = `Service due — ${hours} h since the last service (reminder every ${maintenance.interval_hours} h).`;
+}
+
+noticeDismiss?.addEventListener('click', () => {
+  const maintenance = store.snapshot?.usage?.maintenance;
+  try {
+    localStorage.setItem(NOTICE_KEY, String(maintenance?.last_reset_ts ?? 0));
+  } catch {
+    /* private mode: the banner simply comes back next load */
+  }
+  paintNotice(store.snapshot);
+});
 
 function paintConnection() {
   const connection = store.connection;
@@ -238,13 +280,27 @@ function paintConnection() {
   banner.hidden = !showBanner;
   banner.dataset.conn = connection;
   if (showBanner) {
+    // How old the numbers are matters more than the fact that the link is down: a
+    // frozen temperature that looks live is the one thing worth spelling out.
+    const rawAge = snapshot?.connection?.last_frame_age_s;
+    const age = Number(rawAge);
+    // Number(null) is 0, which would read as "just now" for a frame we know nothing about.
+    const ageText =
+      rawAge != null && Number.isFinite(age)
+        ? age < 60
+          ? `${Math.round(age)} s`
+          : `${Math.round(age / 60)} min`
+        : '';
+    const ageNote = ageText ? ` Last update ${ageText} ago.` : '';
     bannerText.textContent =
       connection === 'offline'
-        ? `No contact with the bridge${printerState ? ` — last known: ${printerState}` : ''}. Values below are stale.`
+        ? `No contact with the bridge${printerState ? ` — last known: ${printerState}` : ''}. Values below are stale.${ageNote}`
         : connection === 'reconnecting'
-          ? 'Reconnecting to the bridge — showing the last known values.'
+          ? `Reconnecting to the bridge — showing the last known values.${ageNote}`
           : 'Connecting to the bridge…';
   }
+
+  paintNotice(snapshot);
 }
 
 function paintToasts() {

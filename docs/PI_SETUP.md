@@ -215,6 +215,10 @@ export EC_PORT=8787
 export EC_AUTH_PASSWORD='choose-something-long'
 export EC_CONTROL=0
 export EC_LOG_LEVEL=INFO
+# Optional, and off unless you set them:
+# export EC_NOTIFY_URL='https://ntfy.sh/a-long-random-topic'
+# export EC_NOTIFY_EVENTS='finished,failed,paused'
+# export EC_MAINTENANCE_HOURS=200
 cd bridge
 python -m elegoo_bridge
 ```
@@ -231,6 +235,13 @@ Notes on those variables:
 - Leave `EC_CAMERA_PORT` alone. It is the port the bridge tries **first**, not the only one it
   tries: if nothing answers on 3031 it probes 8080, and it remembers whichever returned image
   bytes. `GET /api/camera` reports the URL it settled on.
+- `EC_NOTIFY_URL` turns on push messages. ntfy, Telegram, Discord and a plain JSON webhook
+  are supported; the payload shape is inferred from the URL unless `EC_NOTIFY_FORMAT` says
+  otherwise. Default events are `finished,failed`; `EC_NOTIFY_EVENTS=all` is noisier than it
+  sounds, and `none` disables delivery without removing the URL.
+- `EC_MAINTENANCE_HOURS=200` gives you one line in the log (and a "Service due" badge) once
+  the counted print hours since the last reset pass that mark. It is a reminder; the
+  printer's own maintenance schedule still governs the machine.
 
 In a second SSH session:
 
@@ -263,9 +274,27 @@ If it does not work, check these three in order — they cover almost every fail
 **Success looks like:** live temperatures that change, a state label matching the
 printer's screen, and a camera image.
 
+> Optional extra: a Waveshare LCD HAT on the 40-pin header shows the same state without a
+> phone. Setup, pinout and the joystick caveat are in [`PANEL.md`](PANEL.md).
+
 ---
 
 ## 6. Run it as a service
+
+> **Without root.** `scripts/start-bridge.sh` reads the settings from
+> `~/.elegoo-bridge.env` (mode 600) and starts the bridge once — it refuses to start a
+> second copy and waits for a stopping instance to actually exit. Two crontab lines give
+> boot persistence *and* a restart if it dies, without a single `sudo`:
+>
+> ```cron
+> @reboot /home/thijn/Elegoo_connector/scripts/start-bridge.sh start >>/home/thijn/elegoo-bridge.log 2>&1
+> */2 * * * * /home/thijn/Elegoo_connector/scripts/start-bridge.sh ensure >>/home/thijn/elegoo-bridge.log 2>&1
+> ```
+>
+> `ensure` is silent when the bridge is already up, so the watchdog costs no log lines. The
+> panel gets the same pair (`@reboot /bin/sh /home/thijn/panel.sh ensure` and the same
+> `*/2`). The systemd unit below is still the tidier end state, and worth the one `sudo`
+> when you have a terminal open.
 
 1. Create the environment file (root-owned; it contains the password):
 
@@ -283,6 +312,11 @@ printer's screen, and a camera image.
    EC_POLL_MS=5000
    EC_LOG_LEVEL=INFO
    EC_UPLOAD_MAX_MB=2048
+   # Optional:
+   # EC_NOTIFY_URL=https://ntfy.sh/REPLACE_WITH_A_LONG_RANDOM_TOPIC
+   # EC_NOTIFY_EVENTS=finished,failed
+   # EC_MAINTENANCE_HOURS=200
+   # EC_METRICS_TOKEN=REPLACE_WITH_A_LONG_RANDOM_VALUE
    EOF
    sudo chmod 600 /etc/elegoo-bridge.env
    sudo chown root:root /etc/elegoo-bridge.env
@@ -351,41 +385,49 @@ connection and periodic status frames, and `http://<pi>:8787` still works after
 
 ---
 
-## 7. Remote access
-
-Two supported paths. Pick **one**; you can add the other later.
+## 7. Remote accessTwo supported paths. Pick **one**; you can add the other later. The first is scripted,
+the second is manual because it depends on your own domain.
 
 ### 7A. Tailscale (recommended: no public URL exists, so the printer's missing
-
 authentication cannot be reached from the internet)
 
-1. On the Pi:
+On the Pi, one command does the install and the configuration:
 
-   ```bash
-   curl -fsSL https://tailscale.com/install.sh | sh
-   sudo tailscale up
-   ```
+```bash
+cd /home/thijn/Elegoo_connector
+sudo sh scripts/remote-access.sh setup
+```
 
-   Open the printed URL on any device, sign in, and approve the machine.
+It installs Tailscale, brings it up (it prints a URL — open it on any device once, sign in,
+approve the Pi), turns on IPv4 forwarding, and publishes the dashboard on
+`https://<pi>.<tailnet>.ts.net`. It finishes by printing the same report `status` gives:
 
-2. Enable IP forwarding so the Pi can route to the printer:
+```bash
+sh scripts/remote-access.sh status
+```
 
-   ```bash
-   echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-tailscale.conf
-   sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
-   ```
+```
+tailscale     1.86.2
+              Running, elegoo-link.tail1234.ts.net, 100.64.0.12
+dashboard     http://100.64.0.12:8787
+serve         https://elegoo-link.tail1234.ts.net (tailnet only)
+```
 
-3. Advertise **only the printer**, not your whole LAN:
+`scripts/doctor.py` reports the same thing on a `remote access` row, so a broken tunnel
+shows up in the routine check rather than when you are away from home.
 
-   ```bash
-   sudo tailscale set --advertise-routes=192.168.178.129/32
-   ```
+**Optional — also reach the printer's own page.** Off by default, because it widens what
+an approved device can touch:
 
-4. In the Tailscale admin console → **Machines** → your Pi → **Edit route settings**,
-   approve `192.168.178.129/32`.
+```bash
+sudo sh scripts/remote-access.sh printer
+```
 
-5. Restrict who may use that route. In **Access controls**, add a grant limited to the
-   printer's ports and to your own devices, for example:
+Then approve the route: admin console → **Machines** → this Pi → **Edit route settings**.
+Only the printer is advertised (`/32`), never your whole LAN.
+
+Restrict who may use that route. In **Access controls**, add a grant limited to the
+printer's ports and to your own devices, for example:
 
    ```json
    {
@@ -401,15 +443,38 @@ authentication cannot be reached from the internet)
 
    This lets your devices reach the printer's own UI and camera, not your NAS or laptop.
 
-6. Install the Tailscale app on your phone and sign in to the same tailnet.
+Then install the Tailscale app on your phone and sign in to the same tailnet.
 
-7. Test properly: **turn WiFi off on the phone** (use mobile data), open Tailscale, then
-   browse to `http://192.168.178.50:8787`. The dashboard should load exactly as it does
-   at home. Then try `http://192.168.178.129/` for the printer's own page.
+Test properly: **turn WiFi off on the phone** (mobile data), open Tailscale, then browse to
+the `dashboard` URL from the report. The dashboard should load exactly as it does at home;
+with the printer route approved, `http://192.168.178.129/` works too.
 
-Optional: `sudo tailscale serve --bg 8787` gives the dashboard an `https://<pi>.<tailnet>.ts.net`
-name inside the tailnet, which makes "Add to Home Screen" behave better. Do **not** use
-`tailscale funnel` — that publishes to the public internet with no login wall.
+#### Away from home: the two-minute checklist
+
+Do this once at home, then it is the same every time:
+
+1. On the Pi: `sudo sh scripts/remote-access.sh setup`, open the printed URL on the phone,
+   sign in, approve the Pi.
+2. Install the Tailscale app on the phone and sign in with the same account.
+3. On the Pi: `sh scripts/remote-access.sh status` and note the `dashboard` line. Add it to
+   the phone's home screen; you will want it without thinking.
+4. Prove it at home first: WiFi **off**, mobile data on, Tailscale connected, open the URL,
+   log in with `EC_AUTH_PASSWORD` from `~/.elegoo-bridge.env`.
+
+Away from home:
+
+1. Power the Pi. The bridge and the panel start themselves; cron re-checks both every two
+   minutes, so a crash comes back on its own.
+2. Open Tailscale on the phone and confirm the switch is on and the Pi is listed.
+3. Open the dashboard URL and log in.
+
+If it does not load: Tailscale on the phone off or logged out (most common), the Pi is not
+powered or has no WiFi, or you are on a network that blocks outbound UDP — switch the phone
+to mobile data and try again.
+
+Do **not** use `tailscale funnel` — that publishes to the public internet with no login
+wall, which is the one thing this design avoids. `sudo sh scripts/remote-access.sh off`
+stops accepting tailnet traffic and leaves everything else in place.
 
 ### 7B. Cloudflare Tunnel + Access (no VPN app on the phone)
 

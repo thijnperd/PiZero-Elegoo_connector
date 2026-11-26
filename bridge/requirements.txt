@@ -1,7 +1,9 @@
 # Runtime dependencies for the bridge. Pure-Python wheels only: the Pi Zero 2 W has
 # 512 MB of RAM and no build toolchain worth waiting for.
 fastapi>=0.110,<1.0
-uvicorn>=0.27,<1.0
+# >=0.29 for timeout_graceful_shutdown: an open SSE stream would otherwise keep
+# the process alive through a restart (see elegoo_bridge/__main__.py).
+uvicorn>=0.29,<1.0
 httpx>=0.27,<1.0
 websockets>=12,<16
 pydantic>=2.6,<3
