@@ -124,10 +124,10 @@ At boot, put that in cron next to the bridge — the launcher waits up to a minu
 `/dev/fb1` to appear, so it is safe at `@reboot`:
 
 ```cron
-@reboot /bin/sh /home/thijn/panel.sh >> /home/thijn/elegoo-panel.log 2>&1
+@reboot /bin/sh /home/pi/panel.sh >> /home/pi/elegoo-panel.log 2>&1
 ```
 
-It must run as `thijn`, never as root: root's `HOME` is `/root`, so it cannot read
+It must run as your regular user (`pi`), never as root: root's `HOME` is `/root`, so it cannot read
 `~/.elegoo-bridge.env`, gets a 401 and the panel now exits with that message instead of
 drawing `OFFLINE` for ever.
 
@@ -187,9 +187,9 @@ overlap the end of the page title, and the title already names the page. The rul
 
 ### Weather
 
-Buienradar, for one fixed place — Valkenswaard by default. The public feed
-(`data.buienradar.nl/2.0/feed/json`) has no station in Valkenswaard, so the nearest one is
-picked by distance and named on the page (`EINDHOVEN 12KM`), while the rain forecast comes
+Buienradar, for a configurable coordinate pair (KNMI De Bilt by default). The public feed
+(`data.buienradar.nl/2.0/feed/json`) picks the nearest weather station by distance and names it
+on the page (`DE BILT 4KM`), while the rain forecast comes
 from `gadgets.buienradar.nl/data/raintext` for the exact coordinates: 24 five-minute steps
 covering the next two hours, drawn as bars.
 
@@ -205,11 +205,11 @@ not freeze the panel. Success refreshes every ten minutes; a failure keeps the l
 reading and retries after two minutes. No reading at all shows `NO DATA` rather than an
 invented number.
 
-Override the place without touching the code — shell or `~/.elegoo-bridge.env`:
+Set your own coordinates without touching the code — shell, `.env`, or `~/.elegoo-bridge.env`:
 
 ```ini
-EC_PANEL_LAT=51.3506
-EC_PANEL_LON=5.4592
+EC_PANEL_LAT=52.1000
+EC_PANEL_LON=5.1800
 ```
 
 ### Timer

@@ -24,7 +24,7 @@ so a reconnecting client can replace its state atomically.
   "connection": {
     "state": "online",
     "since_ts": 1761819000.0,
-    "printer_host": "192.168.178.129",
+    "printer_host": "192.0.2.10",
     "firmware": "V1.1.46",
     "mainboard_id": "48551d180103147000001c0000000000",
     "reconnects": 2,

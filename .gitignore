@@ -12,6 +12,11 @@ bridge/.venv/
 .dev-state/
 .dev-server.log
 
+# Local environment secrets and personal settings
+.env
+.env.*
+!.env.example
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db

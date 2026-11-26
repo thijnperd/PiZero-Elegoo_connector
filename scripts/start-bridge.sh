@@ -5,7 +5,7 @@
 # command line, where `ps` would show it to every user on the Pi. This is also
 # what cron calls at boot, until a proper systemd unit can be installed:
 #
-#   @reboot /home/thijn/Elegoo_connector/scripts/start-bridge.sh >>/home/thijn/elegoo-bridge.log 2>&1
+#   @reboot /home/pi/Elegoo_connector/scripts/start-bridge.sh >>/home/pi/elegoo-bridge.log 2>&1
 #
 # Usage: scripts/start-bridge.sh [start|stop|restart|ensure]
 #
@@ -14,7 +14,13 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-ENV_FILE=${EC_ENV_FILE:-$HOME/.elegoo-bridge.env}
+if [ -n "${EC_ENV_FILE:-}" ]; then
+    ENV_FILE=$EC_ENV_FILE
+elif [ -f "$HOME/.elegoo-bridge.env" ]; then
+    ENV_FILE=$HOME/.elegoo-bridge.env
+else
+    ENV_FILE=$ROOT/.env
+fi
 #: Match the interpreter's own command line, never this script's.
 PATTERN='-m elegoo_bridge$'
 

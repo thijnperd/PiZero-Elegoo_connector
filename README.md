@@ -50,8 +50,10 @@ Carbon — full UI, fake printer, auth disabled.
 
 ## Quick start (real printer)
 
+Copy [`.env.example`](.env.example) to `.env` (or `~/.elegoo-bridge.env` on the Pi) and set `EC_PRINTER_HOST` and `EC_AUTH_PASSWORD`, or export them in the shell:
+
 ```bash
-export EC_PRINTER_HOST=192.168.178.129
+export EC_PRINTER_HOST=192.0.2.10
 export EC_BIND=0.0.0.0          # loopback-only otherwise
 export EC_AUTH_PASSWORD=...     # without this there is no login at all
 export EC_CONTROL=1             # omit for read-only

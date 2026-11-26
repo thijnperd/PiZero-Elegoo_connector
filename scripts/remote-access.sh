@@ -14,7 +14,13 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-ENV_FILE=${EC_ENV_FILE:-$HOME/.elegoo-bridge.env}
+if [ -n "${EC_ENV_FILE:-}" ]; then
+    ENV_FILE=$EC_ENV_FILE
+elif [ -f "$HOME/.elegoo-bridge.env" ]; then
+    ENV_FILE=$HOME/.elegoo-bridge.env
+else
+    ENV_FILE=$ROOT/.env
+fi
 
 if [ -f "$ENV_FILE" ]; then
     set -a

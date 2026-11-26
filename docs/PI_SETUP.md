@@ -10,8 +10,8 @@ Paths and placeholders used throughout:
 |---|---|---|
 | Pi username | `pi` | Whatever you create in Imager — adjust every path if you pick another |
 | Pi hostname | `elegoo-pi` | Set in Imager or `raspi-config` |
-| Pi address | `192.168.178.50` | **Placeholder.** Your router will assign one; reserve it in step 3 |
-| Printer address | `192.168.178.129` | **Placeholder.** Confirm on the printer's network screen |
+| Pi address | `192.0.2.20` | **Placeholder.** Your router will assign one; reserve it in step 3 |
+| Printer address | `192.0.2.10` | **Placeholder.** Confirm on the printer's network screen |
 | Project directory | `/home/pi/Elegoo_connector` | `git clone` output |
 | Bridge port | `8787` | `EC_PORT` |
 
@@ -154,7 +154,7 @@ to reach the printer at a stable IP, and you need a stable address for the dashb
 
    ```bash
    ip -4 addr show wlan0 | grep inet
-   ping -c 3 192.168.178.129
+   ping -c 3 192.0.2.10
    ```
 
 5. Write both addresses down somewhere you will find them later.
@@ -209,7 +209,7 @@ two IP-dependent values:
 ```bash
 cd /home/pi/Elegoo_connector
 . .venv/bin/activate
-export EC_PRINTER_HOST=192.168.178.129
+export EC_PRINTER_HOST=192.0.2.10
 export EC_BIND=0.0.0.0
 export EC_PORT=8787
 export EC_AUTH_PASSWORD='choose-something-long'
@@ -258,7 +258,7 @@ not `null`. Press `Ctrl-C` in the first session when you are done.
 
 ## 5. Smoke test from a laptop
 
-1. On the laptop, on the same WiFi: open `http://192.168.178.50:8787`.
+1. On the laptop, on the same WiFi: open `http://192.0.2.20:8787`.
 2. Log in with the `EC_AUTH_PASSWORD` you exported.
 
    The Pi's own screen is the exception. With `EC_TRUST_LOOPBACK=1` in
@@ -294,12 +294,12 @@ printer's screen, and a camera image.
 > boot persistence *and* a restart if it dies, without a single `sudo`:
 >
 > ```cron
-> @reboot /home/thijn/Elegoo_connector/scripts/start-bridge.sh start >>/home/thijn/elegoo-bridge.log 2>&1
-> */2 * * * * /home/thijn/Elegoo_connector/scripts/start-bridge.sh ensure >>/home/thijn/elegoo-bridge.log 2>&1
+> @reboot /home/pi/Elegoo_connector/scripts/start-bridge.sh start >>/home/pi/elegoo-bridge.log 2>&1
+> */2 * * * * /home/pi/Elegoo_connector/scripts/start-bridge.sh ensure >>/home/pi/elegoo-bridge.log 2>&1
 > ```
 >
 > `ensure` is silent when the bridge is already up, so the watchdog costs no log lines. The
-> panel gets the same pair (`@reboot /bin/sh /home/thijn/panel.sh ensure` and the same
+> panel gets the same pair (`@reboot /bin/sh /home/pi/panel.sh ensure` and the same
 > `*/2`). The systemd unit below is still the tidier end state, and worth the one `sudo`
 > when you have a terminal open.
 
@@ -308,7 +308,7 @@ printer's screen, and a camera image.
    ```bash
    sudo tee /etc/elegoo-bridge.env >/dev/null <<'EOF'
    # /etc/elegoo-bridge.env
-   EC_PRINTER_HOST=192.168.178.129
+   EC_PRINTER_HOST=192.0.2.10
    EC_BIND=0.0.0.0
    EC_PORT=8787
    EC_AUTH_USER=operator
@@ -403,7 +403,7 @@ authentication cannot be reached from the internet)
 On the Pi, one command does the install and the configuration:
 
 ```bash
-cd /home/thijn/Elegoo_connector
+cd /home/pi/Elegoo_connector
 sudo sh scripts/remote-access.sh setup
 ```
 
@@ -443,7 +443,7 @@ printer's ports and to your own devices, for example:
      "grants": [
        {
          "src": ["autogroup:member"],
-         "dst": ["192.168.178.129"],
+         "dst": ["192.0.2.10"],
          "ip": ["tcp:80", "tcp:3030", "tcp:3031"]
        }
      ]
@@ -456,7 +456,7 @@ Then install the Tailscale app on your phone and sign in to the same tailnet.
 
 Test properly: **turn WiFi off on the phone** (mobile data), open Tailscale, then browse to
 the `dashboard` URL from the report. The dashboard should load exactly as it does at home;
-with the printer route approved, `http://192.168.178.129/` works too.
+with the printer route approved, `http://192.0.2.10/` works too.
 
 #### Away from home: the two-minute checklist
 
@@ -581,7 +581,7 @@ Run these in order after step 7, with the phone on **mobile data only**:
    reveal a wrong `MainboardID`.
 5. **Auth.** In a private browser window with no cookie, the dashboard must ask for the
    password; a wrong password must return `401` and not a partial page.
-6. **Nothing else is exposed.** From the same phone, `http://192.168.178.129:3030` must be
+6. **Nothing else is exposed.** From the same phone, `http://192.0.2.10:3030` must be
    unreachable unless you deliberately allowed the printer route in Tailscale; the
    Cloudflare hostname must never serve the printer's own UI.
 7. **Survives a reboot.** `sudo reboot` the Pi; the dashboard is back within a minute

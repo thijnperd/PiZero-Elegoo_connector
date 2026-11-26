@@ -53,7 +53,7 @@ Why a daemon and not "just expose the printer's port 80":
 ### 1.2 The control protocol (SDCP v3, JSON over WebSocket)
 
 ```
-ws://192.168.178.129:3030/websocket
+ws://192.0.2.10:3030/websocket
 ```
 
 Request envelope (all requests):
@@ -99,7 +99,7 @@ Status/attributes arrive on `sdcp/status/<MainboardID>` and `sdcp/attributes/<Ma
 ### 1.4 Upload (not a WebSocket command)
 
 ```
-POST http://192.168.178.129/uploadFile/upload
+POST http://192.0.2.10/uploadFile/upload
 multipart/form-data:
   Check       = 1
   S-File-MD5  = <whole-file MD5 hex>
@@ -194,13 +194,13 @@ Steps:
    ```sh
    echo 'net.ipv4.ip_forward = 1' | sudo tee /etc/sysctl.d/99-tailscale.conf
    sudo sysctl -p /etc/sysctl.d/99-tailscale.conf
-   sudo tailscale set --advertise-routes=192.168.178.129/32
+   sudo tailscale set --advertise-routes=192.0.2.10/32
    ```
 5. Approve the route in the Tailscale admin console; add an ACL/grant limited to the printer's
    ports (80, 3030, 3031) from your phone's device.
 6. Install Tailscale on the phone and sign into the same tailnet.
 7. Away from home: enable Tailscale → open the dashboard at the Pi's tailnet name, or the
-   printer UI directly at `http://192.168.178.129/`.
+   printer UI directly at `http://192.0.2.10/`.
 
 Optional but nice: `tailscale serve` on the Pi to give the dashboard a proper `https://` name
 inside the tailnet (no public exposure).
@@ -438,14 +438,14 @@ echo -n M99999 | nc -u -b 255.255.255.255 3000
 
 Run these on the Pi, output pasted into `docs/probe.md` in this repo:
 
-1. `nmap -Pn -p 80,3000,3030,3031 192.168.178.129` → confirm which ports are actually open.
-2. `curl -s http://192.168.178.129/ | head` → is the UI a SPA shell? Which JS bundles?
+1. `nmap -Pn -p 80,3000,3030,3031 192.0.2.10` → confirm which ports are actually open.
+2. `curl -s http://192.0.2.10/ | head` → is the UI a SPA shell? Which JS bundles?
 3. Discovery: `M99999` broadcast → capture `MainboardID` + firmware string.
 4. WebSocket: connect to `:3030/websocket`, log every frame for 60 s *without sending anything*
    (attributes/status may be pushed on connect). Do this with the printer **idle**.
 5. Send `Cmd 0` → confirm `RequestID` echo and status field names.
 6. Send `Cmd 1` → save the full attribute payload (this defines your capability matrix).
-7. `curl -sI http://192.168.178.129:3031/video` → confirm MJPEG content type.
+7. `curl -sI http://192.0.2.10:3031/video` → confirm MJPEG content type.
 8. Upload a tiny `.gcode` via `curl -F` and confirm chunk fields + `success:true`; then
    `Cmd 258` to see it listed. Delete with `Cmd 259`.
 9. Open 6 simultaneous WS clients to confirm the 5-client limit on *your* firmware.

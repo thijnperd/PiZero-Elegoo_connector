@@ -10,7 +10,7 @@ fonts to ship, and nothing to compile on a 512 MB board.
 It is a small home screen, not a printer readout: the panel boots on **home**, a
 2x2 launcher of apps (Elegoo, clock, weather, timer), each with a live value on its
 tile. The printer is one of those apps, not the whole device. Weather comes from
-Buienradar for one fixed place (Valkenswaard by default); the timer and the clock
+Buienradar for one fixed place (configured via EC_PANEL_LAT/EC_PANEL_LON in .env or ~/.elegoo-bridge.env); the timer and the clock
 need no network at all, so the panel still does something useful when the bridge is
 away.
 
@@ -502,7 +502,7 @@ def local_ip() -> str:
         _cached_ip[0] = time.monotonic()
         try:
             probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            probe.connect(("192.168.178.1", 53))
+            probe.connect(("192.0.2.1", 53))
             _cached_ip[1] = probe.getsockname()[0]
             probe.close()
         except OSError:
@@ -872,11 +872,10 @@ def draw_icon(canvas: "Canvas", name: str, x: int, y: int, size: int, colour: RG
 
 # --- weather ----------------------------------------------------------------
 
-#: Valkenswaard. Buienradar wants a coordinate pair, not a place name; the public feed
-#: has no station here, so the nearest one (Eindhoven, ~12 km) supplies the readings
-#: while the rain forecast is already interpolated for these exact coordinates.
-DEFAULT_LAT = 51.3506
-DEFAULT_LON = 5.4592
+#: Fallback coordinates (KNMI De Bilt). Set EC_PANEL_LAT and EC_PANEL_LON in
+#: .env or ~/.elegoo-bridge.env to use your own location.
+DEFAULT_LAT = 52.1000
+DEFAULT_LON = 5.1800
 WEATHER_FEED = "https://data.buienradar.nl/2.0/feed/json"
 RAIN_FEED = "https://gadgets.buienradar.nl/data/raintext/?lat={lat}&lon={lon}"
 WEATHER_TTL_S = 600.0
@@ -1092,8 +1091,8 @@ def demo_weather() -> Weather:
     return Weather(
         fetched=time.time(),
         ok=True,
-        station="EINDHOVEN",
-        station_km=11.9,
+        station="DE BILT",
+        station_km=4.2,
         temp=6.5,
         feels=5.2,
         description="ZWAAR BEWOLKT",
@@ -1873,7 +1872,7 @@ def demo_state() -> dict[str, Any]:
         "ts": now,
         "connection": {
             "state": "online",
-            "printer_host": "192.168.178.129",
+            "printer_host": "192.0.2.10",
             "last_frame_age_s": 2.4,
             "since_ts": now - 300,
         },
@@ -1914,7 +1913,8 @@ def demo_state() -> dict[str, Any]:
 
 def env_file_value(name: str) -> str | None:
     """Same source as doctor.py: cron starts us without a shell environment."""
-    for candidate in (Path.home() / ".elegoo-bridge.env", Path("/etc/elegoo-bridge.env")):
+    repo_env = Path(__file__).resolve().parent.parent / ".env"
+    for candidate in (Path.home() / ".elegoo-bridge.env", repo_env, Path("/etc/elegoo-bridge.env")):
         try:
             for line in candidate.read_text().splitlines():
                 if line.startswith(f"{name}="):

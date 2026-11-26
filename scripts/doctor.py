@@ -7,7 +7,7 @@ camera that reports available but returns HTML, an SD card filling up, and an
 undervoltage board that drops WiFi.
 
     python3 scripts/doctor.py                 # on the Pi, against localhost
-    python3 scripts/doctor.py --url http://192.168.178.83:8787 --password ...
+    python3 scripts/doctor.py --url http://192.0.2.20:8787 --password ...
 
 Exit status is 0 only when nothing FAILed, so it can run from cron:
 
@@ -307,7 +307,8 @@ class Doctor:
 
 
 def password_from_env_file() -> str | None:
-    for candidate in (Path.home() / ".elegoo-bridge.env", Path("/etc/elegoo-bridge.env")):
+    repo_env = Path(__file__).resolve().parent.parent / ".env"
+    for candidate in (Path.home() / ".elegoo-bridge.env", repo_env, Path("/etc/elegoo-bridge.env")):
         try:
             for line in candidate.read_text().splitlines():
                 if line.startswith("EC_AUTH_PASSWORD="):
